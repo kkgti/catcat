@@ -1,17 +1,22 @@
 var scene = require('../../utils/scene');
+var GameEngine = require('../../utils/game-engine');
 
 Page({
   data: {
     rooms: [],
+    achievements: [],
+    achieveCount: 0,
+    showAchievements: false,
   },
 
   onLoad: function() {
     this._buildRoomList();
+    this._buildAchievements();
   },
 
   onShow: function() {
-    // 每次返回首页时刷新进度（从游戏页返回时）
     this._buildRoomList();
+    this._buildAchievements();
   },
 
   _buildRoomList: function() {
@@ -36,10 +41,38 @@ Page({
     this.setData({ rooms: rooms });
   },
 
+  _buildAchievements: function() {
+    var unlocked = this._loadAchievements();
+    var list = [];
+    var count = 0;
+    for (var i = 0; i < GameEngine.ACHIEVEMENTS.length; i++) {
+      var a = GameEngine.ACHIEVEMENTS[i];
+      var done = !!unlocked[a.id];
+      if (done) count++;
+      list.push({
+        id: a.id,
+        name: a.name,
+        icon: a.icon,
+        desc: a.desc,
+        done: done,
+      });
+    }
+    this.setData({ achievements: list, achieveCount: count });
+  },
+
   _loadProgress: function() {
     try {
       var data = tt.getStorageSync('catHideProgress');
       return data ? JSON.parse(data) : {};
+    } catch(e) {
+      return {};
+    }
+  },
+
+  _loadAchievements: function() {
+    try {
+      var data = tt.getStorageSync('catHideAchieve');
+      return data ? JSON.parse(data).unlocked || {} : {};
     } catch(e) {
       return {};
     }
@@ -55,5 +88,9 @@ Page({
     tt.navigateTo({
       url: '/pages/game/game?roomIdx=' + idx
     });
+  },
+
+  onToggleAchievements: function() {
+    this.setData({ showAchievements: !this.data.showAchievements });
   },
 });

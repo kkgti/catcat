@@ -11,6 +11,31 @@
     <text class="info-text">小心！点错会扣一颗心 ❤️</text>
   </view>
 
+  <!-- 成就按钮 -->
+  <view class="achieve-toggle" bindtap="onToggleAchievements">
+    <text class="achieve-toggle-icon">🏆</text>
+    <text class="achieve-toggle-text">成就 {{achieveCount}}/{{achievements.length}}</text>
+  </view>
+
+  <!-- 成就面板 -->
+  <view class="achieve-panel" tt:if="{{showAchievements}}">
+    <view class="achieve-header">
+      <text class="achieve-title">🏆 成就墙</text>
+      <text class="achieve-close" bindtap="onToggleAchievements">✕</text>
+    </view>
+    <view class="achieve-grid">
+      <view
+        class="achieve-card {{item.done ? 'done' : 'locked'}}"
+        tt:for="{{achievements}}"
+        tt:key="id"
+      >
+        <text class="achieve-icon">{{item.done ? item.icon : '🔒'}}</text>
+        <text class="achieve-name">{{item.name}}</text>
+        <text class="achieve-desc">{{item.desc}}</text>
+      </view>
+    </view>
+  </view>
+
   <view class="level-list">
     <view
       class="level-card {{item.unlocked ? '' : 'locked'}}"

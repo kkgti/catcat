@@ -1164,7 +1164,106 @@ var game = {
   particles: [],
   // 新手引导
   tutorial: null,
+  // 成就系统
+  achievements: {},      // { id: true, ... }
+  totalCatsFound: 0,
+  achievePopup: null,    // { name, icon, timer }
+  _usedLaser: false,
+  _usedCatnip: false,
+  _hintTriggered: false,
 };
+
+var ACHIEVEMENTS = [
+  { id: 'first_cat',    name: '初次接触',   icon: '🐾', desc: '找到第一只猫咪' },
+  { id: 'perfect',      name: '完美侦探',   icon: '🏆', desc: '零失误通关任意关卡' },
+  { id: 'speed_run',    name: '速度猎人',   icon: '⚡', desc: '60秒内通关' },
+  { id: 'all_clear',    name: '全部通关',   icon: '🎖️', desc: '通关所有关卡' },
+  { id: 'all_stars',    name: '星光收藏家', icon: '🌟', desc: '所有关卡获得3星' },
+  { id: 'cat_master',   name: '猫咪大师',   icon: '👑', desc: '累计找到30只猫' },
+  { id: 'tool_user',    name: '工具达人',   icon: '🧰', desc: '同一局中使用两种道具' },
+  { id: 'no_hint',      name: '火眼金睛',   icon: '👁️', desc: '不触发提示就通关' },
+];
+
+// ==================== 成就系统 ====================
+function loadAchievements() {
+  try {
+    var data = localStorage.getItem('catHideAchieve');
+    if (data) {
+      var parsed = JSON.parse(data);
+      game.achievements = parsed.unlocked || {};
+      game.totalCatsFound = parsed.totalCats || 0;
+    }
+  } catch(e) {}
+}
+
+function saveAchievements() {
+  try {
+    localStorage.setItem('catHideAchieve', JSON.stringify({
+      unlocked: game.achievements,
+      totalCats: game.totalCatsFound,
+    }));
+  } catch(e) {}
+}
+
+function unlockAchievement(id) {
+  if (game.achievements[id]) return;
+  game.achievements[id] = true;
+  saveAchievements();
+  for (var i = 0; i < ACHIEVEMENTS.length; i++) {
+    if (ACHIEVEMENTS[i].id === id) {
+      game.achievePopup = { name: ACHIEVEMENTS[i].name, icon: ACHIEVEMENTS[i].icon, timer: 3.0 };
+      break;
+    }
+  }
+}
+
+function checkWinAchievements(stars) {
+  if (game.mistakes === 0) unlockAchievement('perfect');
+  if (game.playTime <= 60) unlockAchievement('speed_run');
+  if (game._usedLaser && game._usedCatnip) unlockAchievement('tool_user');
+  if (!game._hintTriggered) unlockAchievement('no_hint');
+  var allClear = true;
+  for (var i = 0; i < ROOMS.length; i++) {
+    var rp = levelProgress[ROOMS[i].id];
+    if (!rp || rp.stars < 1) { allClear = false; break; }
+  }
+  if (allClear) unlockAchievement('all_clear');
+  var allStars = true;
+  for (var j = 0; j < ROOMS.length; j++) {
+    var rp2 = levelProgress[ROOMS[j].id];
+    if (!rp2 || rp2.stars < 3) { allStars = false; break; }
+  }
+  if (allStars) unlockAchievement('all_stars');
+}
+
+function drawAchievePopup(ctx) {
+  if (!game.achievePopup) return;
+  var p = game.achievePopup;
+  var slideIn = Math.min(1, (3.0 - p.timer) / 0.4);
+  var slideOut = Math.min(1, p.timer / 0.4);
+  var alpha = Math.min(slideIn, slideOut);
+  var y = 60 + (1 - slideIn) * -50;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  var boxW = 280, boxH = 50;
+  var boxX = VIEW_W / 2 - boxW / 2;
+  DrawUtils.roundRect(ctx, boxX, y, boxW, boxH, 16, 'rgba(50,40,20,0.92)');
+  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
+  DrawUtils.roundRect(ctx, boxX, y, boxW, boxH, 16, null, '#ffd700');
+
+  ctx.font = '22px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(p.icon, boxX + 14, y + boxH / 2);
+
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('成就解锁!', boxX + 46, y + 17);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#eee';
+  ctx.fillText(p.name, boxX + 46, y + 35);
+
+  ctx.restore();
+}
+
+loadAchievements();
 
 // ==================== 初始化 ====================
 function initGame(roomIdx) {
@@ -1189,6 +1288,10 @@ function initGame(roomIdx) {
   game.hintTimer = 0; game.hintCat = null; game.hintAlpha = 0;
   game._lastFoundTime = 0;
   game.particles = [];
+  game._usedLaser = false;
+  game._usedCatnip = false;
+  game._hintTriggered = false;
+  game.achievePopup = null;
 
   // 随机放置当前房间的物品
   var roomItems = placeItems(room.items);
@@ -1401,6 +1504,7 @@ function update() {
           levelProgress[ROOMS[game.currentRoomIdx + 1].id].unlocked = true;
         }
         saveProgress();
+        checkWinAchievements(stars);
       } else {
         game.state = 'playing';
       }
@@ -1480,6 +1584,7 @@ function update() {
         game.hintTimer = 2.0;
         game.hintAlpha = 0;
         game._lastFoundTime = 0;
+        game._hintTriggered = true;
       }
     }
     if (game.hintTimer > 0) {
@@ -1504,6 +1609,12 @@ function update() {
 
   // Toast
   if (game.toastTimer > 0) { game.toastTimer -= dt; if (game.toastTimer <= 0) game.toast = ''; }
+
+  // 成就弹窗计时
+  if (game.achievePopup) {
+    game.achievePopup.timer -= dt;
+    if (game.achievePopup.timer <= 0) game.achievePopup = null;
+  }
 }
 
 // ==================== 渲染 ====================
@@ -2063,6 +2174,9 @@ function render() {
     ctx.fillStyle = '#fff'; ctx.fillText(game.toast, VIEW_W/2, VIEW_H*0.88);
   }
 
+  // 成就弹窗
+  drawAchievePopup(ctx);
+
   // 结算画面
   if (game.state === 'win' || game.state === 'lose') {
     drawEndScreen(ctx);
@@ -2580,6 +2694,7 @@ function handleTap(vx, vy) {
   // 如果激光笔模式激活，使用激光笔
   if (game.activeTool === 'laser' && game.laserCooldown <= 0) {
     game.laserActive = true;
+    game._usedLaser = true;
     game.laserX = rx; game.laserY = ry;
     game.laserTargetX = rx; game.laserTargetY = ry;
     game.laserTimer = 2.5;
@@ -2617,6 +2732,11 @@ function handleTap(vx, vy) {
     if (game.tutorial && game.tutorial.step <= 1) {
       game.tutorial.step = 2; game.tutorial.timer = 0;
     }
+    // 成就：初次接触 + 累计猫数
+    game.totalCatsFound++;
+    unlockAchievement('first_cat');
+    if (game.totalCatsFound >= 30) unlockAchievement('cat_master');
+    saveAchievements();
   } else {
     // 引导模式 tap 步骤：点错不扣血
     if (game.tutorial && game.tutorial.step === 1) {
@@ -2652,6 +2772,7 @@ function handleToolBtnClick(type) {
     }
     // 直接在视口中心使用
     game.catnipActive = true;
+    game._usedCatnip = true;
     game.catnipX = VIEW_W / 2;
     game.catnipY = (BACK_B + FLOOR_B) / 2;
     game.catnipTimer = 3.0;
@@ -2685,6 +2806,45 @@ function renderLevelSelect() {
     }
     container.appendChild(card);
   });
+
+  // 成就按钮
+  var achieveBtn = document.createElement('div');
+  achieveBtn.style.cssText = 'margin-top:20px;padding:10px 24px;background:rgba(255,215,0,0.15);border:2px solid rgba(255,215,0,0.4);border-radius:20px;cursor:pointer;text-align:center;color:#ffd700;font-weight:bold;font-size:14px;width:200px;';
+  var count = 0;
+  for (var k in game.achievements) { if (game.achievements[k]) count++; }
+  achieveBtn.textContent = '🏆 成就 ' + count + '/' + ACHIEVEMENTS.length;
+  achieveBtn.addEventListener('click', function() { showAchievementPanel(); });
+  container.appendChild(achieveBtn);
+}
+
+function showAchievementPanel() {
+  var existing = document.getElementById('achievePanel');
+  if (existing) { existing.remove(); return; }
+
+  var panel = document.createElement('div');
+  panel.id = 'achievePanel';
+  panel.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:340px;max-height:80vh;overflow-y:auto;background:rgba(15,15,30,0.95);border:2px solid rgba(255,215,0,0.4);border-radius:16px;padding:20px;z-index:20;';
+
+  var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
+    '<span style="color:#ffd700;font-weight:bold;font-size:18px;">🏆 成就墙</span>' +
+    '<span id="achieveClose" style="color:#999;font-size:20px;cursor:pointer;padding:4px 8px;">✕</span></div>';
+
+  var grid = '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+  ACHIEVEMENTS.forEach(function(a) {
+    var done = !!game.achievements[a.id];
+    var opacity = done ? '1' : '0.4';
+    var border = done ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.1)';
+    var bg = done ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.05)';
+    grid += '<div style="width:148px;padding:12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';text-align:center;opacity:' + opacity + ';">' +
+      '<div style="font-size:28px;">' + (done ? a.icon : '🔒') + '</div>' +
+      '<div style="color:#fff;font-size:12px;font-weight:bold;margin:4px 0 2px;">' + a.name + '</div>' +
+      '<div style="color:#aaa;font-size:11px;">' + a.desc + '</div></div>';
+  });
+  grid += '</div>';
+
+  panel.innerHTML = header + grid;
+  document.getElementById('startScreen').appendChild(panel);
+  document.getElementById('achieveClose').addEventListener('click', function() { panel.remove(); });
 }
 
 function startLevel(idx) {

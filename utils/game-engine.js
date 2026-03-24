@@ -10,6 +10,18 @@ var VIEW_W = scene.VIEW_W;
 var VIEW_H = scene.VIEW_H;
 var ITEM_SCALE = scene.ITEM_SCALE;
 
+// ========== 成就定义 ==========
+var ACHIEVEMENTS = [
+  { id: 'first_cat',    name: '初次接触',   icon: '🐾', desc: '找到第一只猫咪' },
+  { id: 'perfect',      name: '完美侦探',   icon: '🏆', desc: '零失误通关任意关卡' },
+  { id: 'speed_run',    name: '速度猎人',   icon: '⚡', desc: '60秒内通关' },
+  { id: 'all_clear',    name: '全部通关',   icon: '🎖️', desc: '通关所有关卡' },
+  { id: 'all_stars',    name: '星光收藏家', icon: '🌟', desc: '所有关卡获得3星' },
+  { id: 'cat_master',   name: '猫咪大师',   icon: '👑', desc: '累计找到30只猫' },
+  { id: 'tool_user',    name: '工具达人',   icon: '🧰', desc: '同一局中使用两种道具' },
+  { id: 'no_hint',      name: '火眼金睛',   icon: '👁️', desc: '不触发提示就通关' },
+];
+
 function GameEngine() {
   this.state = 'ready';
   this.ctx = null;
@@ -74,6 +86,13 @@ function GameEngine() {
   this.particles = [];
   // 新手引导
   this.tutorial = null; // { step, timer, tapTarget }
+  // 成就系统
+  this.achievements = {};    // { id: true } 已解锁
+  this.achievePopup = null;  // { name, icon, timer }
+  this.totalCatsFound = 0;   // 累计找猫数
+  this._usedLaser = false;
+  this._usedCatnip = false;
+  this._hintTriggered = false;
   // 动画帧 ID
   this._rafId = null;
   // 回调
@@ -92,8 +111,8 @@ GameEngine.prototype.init = function(ctx, canvasW, canvasH, dpr) {
   this.canvasH = canvasH;
   this.dpr = dpr || 1;
   this.scale = canvasW / VIEW_W;
-  // 加载进度
   this._loadProgress();
+  this._loadAchievements();
 };
 
 GameEngine.prototype._loadProgress = function() {
@@ -116,6 +135,39 @@ GameEngine.prototype._saveProgress = function() {
   try {
     tt.setStorageSync('catHideProgress', JSON.stringify(this.levelProgress));
   } catch(e) {}
+};
+
+GameEngine.prototype._loadAchievements = function() {
+  try {
+    var data = tt.getStorageSync('catHideAchieve');
+    if (data) {
+      var parsed = JSON.parse(data);
+      this.achievements = parsed.unlocked || {};
+      this.totalCatsFound = parsed.totalCats || 0;
+    }
+  } catch(e) {}
+};
+
+GameEngine.prototype._saveAchievements = function() {
+  try {
+    tt.setStorageSync('catHideAchieve', JSON.stringify({
+      unlocked: this.achievements,
+      totalCats: this.totalCatsFound,
+    }));
+  } catch(e) {}
+};
+
+GameEngine.prototype._unlockAchievement = function(id) {
+  if (this.achievements[id]) return; // 已解锁
+  this.achievements[id] = true;
+  this._saveAchievements();
+  // 找到成就信息并弹出
+  for (var i = 0; i < ACHIEVEMENTS.length; i++) {
+    if (ACHIEVEMENTS[i].id === id) {
+      this.achievePopup = { name: ACHIEVEMENTS[i].name, icon: ACHIEVEMENTS[i].icon, timer: 3.0 };
+      break;
+    }
+  }
 };
 
 GameEngine.prototype.startGame = function(roomIdx) {
@@ -154,6 +206,9 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.hintAlpha = 0;
   this._lastFoundTime = 0;
   this.particles = [];
+  this._usedLaser = false;
+  this._usedCatnip = false;
+  this._hintTriggered = false;
 
   var roomId = room.id;
 
@@ -305,10 +360,18 @@ GameEngine.prototype._update = function() {
           this.levelProgress[nextId].unlocked = true;
         }
         this._saveProgress();
+        // 成就检查
+        this._checkWinAchievements(stars);
       } else {
         this.state = 'playing';
       }
     }
+  }
+
+  // 成就弹窗计时
+  if (this.achievePopup) {
+    this.achievePopup.timer -= dt;
+    if (this.achievePopup.timer <= 0) this.achievePopup = null;
   }
 
   // 点错动画
@@ -382,6 +445,7 @@ GameEngine.prototype._update = function() {
         this.hintCat = unfound[Math.floor(Math.random() * unfound.length)];
         this.hintTimer = 2.0;
         this.hintAlpha = 0;
+        this._hintTriggered = true;
         this._lastFoundTime = 0;
       }
     }
@@ -631,6 +695,9 @@ GameEngine.prototype._render = function() {
   if (this.tutorial && this.state !== 'win' && this.state !== 'lose') {
     this._drawTutorial(ctx);
   }
+
+  // 成就弹窗（最上层）
+  this._drawAchievePopup(ctx);
 
   ctx.restore();
 };
@@ -890,6 +957,61 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
   ctx.fillStyle = '#ddd';
   ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
   this.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
+};
+
+// ========== 成就检查 & 渲染 ==========
+
+GameEngine.prototype._checkWinAchievements = function(stars) {
+  // 完美侦探：零失误
+  if (this.mistakes === 0) this._unlockAchievement('perfect');
+  // 速度猎人：60秒内通关
+  if (this.playTime <= 60) this._unlockAchievement('speed_run');
+  // 工具达人：两种道具都用了
+  if (this._usedLaser && this._usedCatnip) this._unlockAchievement('tool_user');
+  // 火眼金睛：没触发提示
+  if (!this._hintTriggered) this._unlockAchievement('no_hint');
+  // 全部通关：所有房间至少1星
+  var allClear = true;
+  for (var i = 0; i < scene.ROOMS.length; i++) {
+    var rp = this.levelProgress[scene.ROOMS[i].id];
+    if (!rp || rp.stars < 1) { allClear = false; break; }
+  }
+  if (allClear) this._unlockAchievement('all_clear');
+  // 星光收藏家：所有房间3星
+  var allStars = true;
+  for (var j = 0; j < scene.ROOMS.length; j++) {
+    var rp2 = this.levelProgress[scene.ROOMS[j].id];
+    if (!rp2 || rp2.stars < 3) { allStars = false; break; }
+  }
+  if (allStars) this._unlockAchievement('all_stars');
+};
+
+GameEngine.prototype._drawAchievePopup = function(ctx) {
+  if (!this.achievePopup) return;
+  var p = this.achievePopup;
+  // 从顶部滑入
+  var slideIn = Math.min(1, (3.0 - p.timer) / 0.4);
+  var slideOut = Math.min(1, p.timer / 0.4);
+  var alpha = Math.min(slideIn, slideOut);
+  var y = 60 + (1 - slideIn) * -50;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  var boxW = 280, boxH = 50;
+  var boxX = VIEW_W / 2 - boxW / 2;
+  draw.roundRect(ctx, boxX, y, boxW, boxH, 16, 'rgba(50,40,20,0.92)');
+  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
+  draw.roundRect(ctx, boxX, y, boxW, boxH, 16, null, '#ffd700');
+
+  ctx.font = '22px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(p.icon, boxX + 14, y + boxH / 2);
+
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('成就解锁!', boxX + 46, y + 17);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#eee';
+  ctx.fillText(p.name, boxX + 46, y + 35);
+
+  ctx.restore();
 };
 
 // ========== 新手引导 ==========
@@ -1223,6 +1345,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
   // 激光笔使用
   if (this.activeTool === 'laser' && this.laserCooldown <= 0) {
     this.laserActive = true;
+    this._usedLaser = true;
     this.laserX = vx; this.laserY = vy;
     this.laserTargetX = vx; this.laserTargetY = vy;
     this.laserTimer = 2.5;
@@ -1261,6 +1384,11 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (this.tutorial && this.tutorial.step <= 1) {
       this.tutorial.step = 2; this.tutorial.timer = 0;
     }
+    // 成就：初次接触 + 累计猫数
+    this.totalCatsFound++;
+    this._unlockAchievement('first_cat');
+    if (this.totalCatsFound >= 30) this._unlockAchievement('cat_master');
+    this._saveAchievements();
   } else {
     // 引导模式 tap 步骤：点错不扣血，提示重试
     if (this.tutorial && this.tutorial.step === 1) {
@@ -1297,6 +1425,7 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
       return;
     }
     this.catnipActive = true;
+    this._usedCatnip = true;
     this.catnipX = VIEW_W / 2;
     this.catnipY = (scene.BACK_B + scene.FLOOR_B) / 2;
     this.catnipTimer = 3.0;
@@ -1306,4 +1435,5 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
   }
 };
 
+GameEngine.ACHIEVEMENTS = ACHIEVEMENTS;
 module.exports = GameEngine;
