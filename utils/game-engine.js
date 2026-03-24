@@ -127,6 +127,8 @@ GameEngine.prototype._loadProgress = function() {
       livingroom: {unlocked:true, stars:0},
       kitchen: {unlocked:false, stars:0},
       bedroom: {unlocked:false, stars:0},
+      bathroom: {unlocked:false, stars:0},
+      study: {unlocked:false, stars:0},
     };
   }
 };

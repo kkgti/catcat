@@ -787,6 +787,283 @@ var BEDROOM_DISGUISES = [
     }},
 ];
 
+// ==================== 浴室物品模板 ====================
+var BATHROOM_ITEMS = [
+  { id:'bathtub', name:'浴缸', w:220, h:100, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.2,w,h*0.8,12,'#e8e8e8');
+      DrawUtils.roundRect(ctx,x+8,y+h*0.28,w-16,h*0.65,8,'#d0e8f0');
+      ctx.fillStyle='rgba(100,180,220,0.15)'; ctx.fillRect(x+12,y+h*0.5,w-24,h*0.38);
+      ctx.fillStyle='#bbb'; ctx.fillRect(x+w-30,y,12,h*0.3);
+      ctx.beginPath(); ctx.arc(x+w-24,y,8,0,Math.PI*2); ctx.fillStyle='#ccc'; ctx.fill();
+    }},
+  { id:'toilet', name:'马桶', w:60, h:70, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.5,w*0.8,h*0.5,6,'#f0f0f0');
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.4,w*0.42,h*0.2,'#f5f5f5');
+      DrawUtils.roundRect(ctx,x+w*0.2,y,w*0.6,h*0.35,4,'#e8e8e8');
+      ctx.fillStyle='#ddd'; ctx.fillRect(x+w*0.42,y+h*0.08,w*0.16,h*0.12);
+    }},
+  { id:'sink_bath', name:'洗手台', w:110, h:55, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#ddd');
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.6,w*0.35,h*0.25,'#c8c8c8');
+      ctx.fillStyle='#bbb'; ctx.fillRect(x+w/2-4,y-10,8,14);
+      ctx.beginPath(); ctx.arc(x+w/2,y-10,6,0,Math.PI*2); ctx.fillStyle='#ccc'; ctx.fill();
+      DrawUtils.roundRect(ctx,x+w*0.15,y-70,w*0.7,60,6,'#aac8dd');
+      ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(x+w*0.2,y-65,w*0.3,50);
+    }},
+  { id:'shower', name:'淋浴', w:80, h:180, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      ctx.fillStyle='rgba(180,220,240,0.2)'; ctx.fillRect(x,y,w,h);
+      ctx.strokeStyle='rgba(180,220,240,0.4)'; ctx.lineWidth=2; ctx.strokeRect(x,y,w,h);
+      DrawUtils.roundRect(ctx,x+w*0.3,y+5,w*0.4,8,3,'#ccc');
+      ctx.fillStyle='#bbb'; ctx.fillRect(x+w/2-3,y+13,6,20);
+      ctx.fillStyle='rgba(100,180,220,0.15)';
+      for(var d=0;d<5;d++){
+        var dx=x+w*0.2+d*w*0.15, dy=y+40+((Date.now()/300+d*50)%h*0.6);
+        ctx.beginPath(); ctx.arc(dx,dy,1.5,0,Math.PI*2); ctx.fill();
+      }
+    }},
+  { id:'bath_shelf', name:'浴室架', w:80, h:80, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#e0e0e0');
+      ctx.fillStyle='#d0d0d0'; ctx.fillRect(x+3,y+h*0.48,w-6,3);
+      DrawUtils.roundRect(ctx,x+8,y+8,12,h*0.38,3,'#66aacc');
+      DrawUtils.roundRect(ctx,x+24,y+12,10,h*0.34,3,'#cc6688');
+      DrawUtils.roundRect(ctx,x+38,y+6,14,h*0.40,3,'#88bb66');
+      DrawUtils.roundRect(ctx,x+56,y+10,12,h*0.36,3,'#ddaa44');
+      DrawUtils.roundRect(ctx,x+10,y+h*0.55,20,h*0.35,3,'#eee');
+      DrawUtils.roundRect(ctx,x+35,y+h*0.58,18,h*0.32,2,'#f8e0c0');
+      DrawUtils.roundRect(ctx,x+58,y+h*0.56,14,h*0.34,3,'#aaddee');
+    }},
+  { id:'bath_mat', name:'浴室垫', w:100, h:40, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,8,'#88bbaa');
+      ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1;
+      for(var i=1;i<5;i++){ ctx.beginPath(); ctx.moveTo(x+i*w/5,y+3); ctx.lineTo(x+i*w/5,y+h-3); ctx.stroke(); }
+    }},
+  { id:'towel_rack', name:'毛巾架', w:60, h:50, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      ctx.fillStyle='#ccc'; ctx.fillRect(x,y,w,4);
+      ctx.fillStyle='#ccc'; ctx.fillRect(x+5,y,4,15); ctx.fillRect(x+w-9,y,4,15);
+      DrawUtils.roundRect(ctx,x+3,y+8,w*0.45,h*0.8,3,'#ff9999');
+      DrawUtils.roundRect(ctx,x+w*0.5,y+6,w*0.45,h*0.85,3,'#99ccff');
+    }},
+  { id:'laundry_basket', name:'脏衣篓', w:55, h:60, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+5,y); ctx.lineTo(x+w-5,y);
+      ctx.lineTo(x+w,y+h); ctx.lineTo(x,y+h); ctx.closePath();
+      ctx.fillStyle='#c0a070'; ctx.fill();
+      ctx.strokeStyle='#a08050'; ctx.lineWidth=1;
+      for(var r=0;r<4;r++){ ctx.beginPath(); ctx.moveTo(x+2,y+r*h/4+8); ctx.lineTo(x+w-2,y+r*h/4+8); ctx.stroke(); }
+      ctx.fillStyle='#6688cc'; ctx.fillRect(x+8,y-5,15,10);
+      ctx.fillStyle='#cc6666'; ctx.fillRect(x+w-22,y-3,14,8);
+    }},
+];
+
+var BATHROOM_DISGUISES = [
+  { id:'dis_ducky', name:'小黄鸭', w:35, h:30, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w*0.5,y+h*0.65,w*0.4,h*0.3,'#ffdd44');
+      ctx.beginPath(); ctx.arc(x+w*0.35,y+h*0.3,w*0.22,0,Math.PI*2); ctx.fillStyle='#ffdd44'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.28,y+h*0.22,2,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w*0.2,y+h*0.3); ctx.lineTo(x+w*0.05,y+h*0.35); ctx.lineTo(x+w*0.2,y+h*0.4);
+      ctx.fillStyle='#ff8800'; ctx.fill();
+    }},
+  { id:'dis_shampoo', name:'洗发水', w:25, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.2,w,h*0.8,5,'#cc66aa');
+      DrawUtils.roundRect(ctx,x+w*0.2,y,w*0.6,h*0.25,3,'#dd77bb');
+      ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.fillRect(x+3,y+h*0.35,w*0.35,h*0.4);
+      ctx.fillStyle='#fff'; ctx.font='8px sans-serif'; ctx.textAlign='center'; ctx.fillText('S',x+w/2,y+h*0.6);
+    }},
+  { id:'dis_soap', name:'肥皂', w:35, h:22, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#aaddcc');
+      ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.fillRect(x+4,y+3,w*0.4,h*0.4);
+      ctx.beginPath(); ctx.arc(x+w*0.8,y-3,4,0,Math.PI*2); ctx.fillStyle='rgba(200,230,255,0.4)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.9,y-8,3,0,Math.PI*2); ctx.fill();
+    }},
+  { id:'dis_toothbrush_cup', name:'漱口杯', w:28, h:40, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.25,w*0.8,h*0.75,4,'#88ccee');
+      ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(x+w*0.15,y+h*0.3,w*0.3,h*0.65);
+      ctx.fillStyle='#44aa44'; ctx.fillRect(x+w*0.3,y,4,h*0.5);
+      DrawUtils.roundRect(ctx,x+w*0.22,y,10,6,2,'#66cc66');
+      ctx.fillStyle='#ff6666'; ctx.fillRect(x+w*0.55,y+h*0.05,4,h*0.45);
+      DrawUtils.roundRect(ctx,x+w*0.47,y+h*0.05,10,6,2,'#ff8888');
+    }},
+  { id:'dis_sponge', name:'海绵', w:35, h:24, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,5,'#ffdd55');
+      ctx.fillStyle='rgba(0,0,0,0.05)';
+      for(var i=0;i<6;i++){
+        var px=x+5+i*5, py=y+4+(i%2)*6;
+        ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2); ctx.fill();
+      }
+      DrawUtils.roundRect(ctx,x,y+h*0.7,w,h*0.3,3,'#55aa55');
+    }},
+  { id:'dis_candle_bath', name:'香薰蜡烛', w:25, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+2,y+h*0.3,w-4,h*0.7,4,'#f0e0d0');
+      ctx.fillStyle='#ddd'; ctx.fillRect(x+w/2-1,y+h*0.15,2,h*0.18);
+      var flicker=Math.sin(Date.now()/200)*2;
+      ctx.beginPath(); ctx.moveTo(x+w/2,y); ctx.quadraticCurveTo(x+w/2+5+flicker,y+h*0.12,x+w/2,y+h*0.2);
+      ctx.quadraticCurveTo(x+w/2-5+flicker,y+h*0.12,x+w/2,y);
+      ctx.fillStyle='#ffaa33'; ctx.fill();
+    }},
+];
+
+// ==================== 书房物品模板 ====================
+var STUDY_ITEMS = [
+  { id:'s_desk', name:'大书桌', w:260, h:65, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h*0.35,4,'#5a4030');
+      ctx.fillStyle='#4a3020';
+      ctx.fillRect(x+10,y+h*0.35,8,h*0.65); ctx.fillRect(x+w-18,y+h*0.35,8,h*0.65);
+      DrawUtils.roundRect(ctx,x+w*0.65,y+h*0.35,w*0.28,h*0.55,3,'#5a4030');
+      ctx.beginPath(); ctx.arc(x+w*0.79,y+h*0.55,3,0,Math.PI*2); ctx.fillStyle='#aa9977'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.79,y+h*0.75,3,0,Math.PI*2); ctx.fill();
+    }},
+  { id:'s_bookcase', name:'大书柜', w:160, h:200, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#5c3a20');
+      for(var s=1;s<4;s++){
+        ctx.fillStyle='#4a2a15'; ctx.fillRect(x+4,y+h*s/4,w-8,4);
+      }
+      var bookColors=[['#cc4444','#4466cc','#44aa44','#cc8844','#8855aa','#dd6666'],
+                      ['#5588aa','#aa6633','#66bb66','#cc4466','#ddaa44'],
+                      ['#885533','#6677cc','#cc5555','#44aa88','#aa77cc','#ddbb44'],
+                      ['#997744','#5599bb','#cc6644','#669966']];
+      for(var r=0;r<4;r++){
+        var bx=x+8, by=y+h*r/4+8, bh=h/4-14;
+        for(var b=0;b<bookColors[r].length;b++){
+          var bw=10+Math.floor(b*3%8);
+          DrawUtils.roundRect(ctx,bx,by+(bh-bh*0.9)/2,bw,bh*0.9,1,bookColors[r][b]);
+          bx+=bw+2;
+        }
+      }
+    }},
+  { id:'s_chair', name:'皮椅', w:65, h:80, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+5,y,w-10,h*0.5,8,'#6a3a20');
+      DrawUtils.roundRect(ctx,x,y+h*0.4,w,h*0.22,6,'#7a4a30');
+      ctx.fillStyle='#555'; ctx.fillRect(x+w/2-3,y+h*0.62,6,h*0.2);
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.9,w*0.35,h*0.06,'#444');
+      ctx.fillStyle='#6a3a20';
+      ctx.fillRect(x-3,y+h*0.2,8,h*0.3); ctx.fillRect(x+w-5,y+h*0.2,8,h*0.3);
+    }},
+  { id:'s_lamp', name:'台灯', w:40, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.92,w*0.3,h*0.06,'#555');
+      ctx.fillStyle='#666'; ctx.fillRect(x+w/2-2,y+h*0.35,4,h*0.55);
+      ctx.beginPath(); ctx.moveTo(x+w*0.1,y+h*0.4); ctx.lineTo(x+w*0.3,y);
+      ctx.lineTo(x+w*0.7,y); ctx.lineTo(x+w*0.9,y+h*0.4); ctx.closePath();
+      ctx.fillStyle='#ddcc88'; ctx.fill();
+      var glow=ctx.createRadialGradient(x+w/2,y+h*0.3,3,x+w/2,y+h*0.3,30);
+      glow.addColorStop(0,'rgba(255,220,150,0.12)'); glow.addColorStop(1,'rgba(255,220,150,0)');
+      ctx.fillStyle=glow; ctx.fillRect(x-10,y-10,w+20,h*0.6);
+    }},
+  { id:'globe_study', name:'地球仪', w:50, h:60, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.25,y+h*0.88,w*0.5,h*0.12,3,'#6a5a4a');
+      ctx.fillStyle='#6a5a4a'; ctx.fillRect(x+w/2-2,y+h*0.45,4,h*0.43);
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.38,w*0.38,0,Math.PI*2); ctx.fillStyle='#4488bb'; ctx.fill();
+      ctx.fillStyle='#55aa55';
+      ctx.beginPath(); ctx.arc(x+w*0.38,y+h*0.3,7,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.62,y+h*0.4,9,0,Math.PI*2); ctx.fill();
+    }},
+  { id:'filing_cabinet', name:'文件柜', w:60, h:100, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,3,'#778899');
+      for(var d=0;d<3;d++){
+        var dy=y+5+d*h/3;
+        DrawUtils.roundRect(ctx,x+4,dy,w-8,h/3-8,2,'#8899aa');
+        ctx.beginPath(); ctx.arc(x+w/2,dy+(h/3-8)/2,3,0,Math.PI*2); ctx.fillStyle='#aab'; ctx.fill();
+      }
+    }},
+  { id:'s_rug', name:'地毯', w:180, h:60, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#8b4513');
+      DrawUtils.roundRect(ctx,x+6,y+6,w-12,h-12,3,'#a0522d');
+      ctx.strokeStyle='rgba(255,215,0,0.3)'; ctx.lineWidth=1;
+      ctx.strokeRect(x+12,y+12,w-24,h-24);
+    }},
+  { id:'s_window_plant', name:'窗台植物', w:35, h:40, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.15,y+h*0.55,w*0.7,h*0.45,4,'#cc8855');
+      ctx.fillStyle='#5a3a1a'; ctx.fillRect(x+w*0.2,y+h*0.6,w*0.6,h*0.1);
+      ctx.fillStyle='#44aa44';
+      ctx.beginPath(); ctx.ellipse(x+w*0.3,y+h*0.3,8,14,-.3,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+w*0.6,y+h*0.25,7,12,.4,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+w*0.45,y+h*0.15,6,13,0,0,Math.PI*2); ctx.fill();
+    }},
+];
+
+var STUDY_DISGUISES = [
+  { id:'dis_inkwell', name:'墨水瓶', w:28, h:32, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.35,w*0.8,h*0.65,4,'#334');
+      DrawUtils.roundRect(ctx,x+w*0.25,y+h*0.2,w*0.5,h*0.2,2,'#445');
+      ctx.fillStyle='rgba(20,20,60,0.6)'; ctx.fillRect(x+w*0.2,y+h*0.45,w*0.6,h*0.35);
+      ctx.save(); ctx.translate(x+w*0.7,y+h*0.2); ctx.rotate(-0.4);
+      ctx.fillStyle='#eee'; ctx.fillRect(-1,0,3,-30);
+      ctx.beginPath(); ctx.moveTo(1,-28); ctx.lineTo(-4,-35); ctx.lineTo(6,-35); ctx.fill();
+      ctx.restore();
+    }},
+  { id:'dis_hourglass', name:'沙漏', w:28, h:45, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y,w*0.8,h*0.08,2,'#aa8855');
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.92,w*0.8,h*0.08,2,'#aa8855');
+      ctx.beginPath(); ctx.moveTo(x+w*0.15,y+h*0.08); ctx.lineTo(x+w*0.42,y+h*0.48);
+      ctx.lineTo(x+w*0.58,y+h*0.48); ctx.lineTo(x+w*0.85,y+h*0.08); ctx.closePath();
+      ctx.fillStyle='rgba(220,200,150,0.4)'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w*0.15,y+h*0.92); ctx.lineTo(x+w*0.42,y+h*0.52);
+      ctx.lineTo(x+w*0.58,y+h*0.52); ctx.lineTo(x+w*0.85,y+h*0.92); ctx.closePath();
+      ctx.fillStyle='rgba(220,200,150,0.4)'; ctx.fill();
+      ctx.fillStyle='#ddc080'; ctx.fillRect(x+w*0.2,y+h*0.7,w*0.6,h*0.22);
+    }},
+  { id:'dis_magnifier', name:'放大镜', w:38, h:40, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.arc(x+w*0.45,y+h*0.4,w*0.32,0,Math.PI*2);
+      ctx.strokeStyle='#aa8855'; ctx.lineWidth=3; ctx.stroke();
+      ctx.fillStyle='rgba(200,230,255,0.25)'; ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.15)';
+      ctx.beginPath(); ctx.arc(x+w*0.38,y+h*0.32,w*0.12,0,Math.PI*2); ctx.fill();
+      ctx.save(); ctx.translate(x+w*0.7,y+h*0.7); ctx.rotate(0.7);
+      ctx.fillStyle='#8a6a3a'; ctx.fillRect(0,-3,w*0.4,6); ctx.restore();
+    }},
+  { id:'dis_scroll', name:'卷轴', w:50, h:22, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.08,y+h*0.15,w*0.84,h*0.7,3,'#f0e4c8');
+      ctx.strokeStyle='rgba(0,0,0,0.08)'; ctx.lineWidth=0.5;
+      for(var l=0;l<4;l++){ ctx.beginPath(); ctx.moveTo(x+w*0.15,y+h*0.3+l*4); ctx.lineTo(x+w*0.85,y+h*0.3+l*4); ctx.stroke(); }
+      DrawUtils.ellipse(ctx,x+w*0.06,y+h/2,h*0.3,h*0.45,'#d4c0a0');
+      DrawUtils.ellipse(ctx,x+w*0.94,y+h/2,h*0.3,h*0.45,'#d4c0a0');
+    }},
+  { id:'dis_compass', name:'指南针', w:35, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.arc(x+w/2,y+h/2,w*0.45,0,Math.PI*2); ctx.fillStyle='#aa8855'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h/2,w*0.38,0,Math.PI*2); ctx.fillStyle='#fffff0'; ctx.fill();
+      ctx.fillStyle='#cc3333';
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.2); ctx.lineTo(x+w*0.45,y+h/2); ctx.lineTo(x+w*0.55,y+h/2); ctx.fill();
+      ctx.fillStyle='#3366cc';
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.8); ctx.lineTo(x+w*0.45,y+h/2); ctx.lineTo(x+w*0.55,y+h/2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h/2,2,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+    }},
+  { id:'dis_bookstack', name:'书堆', w:40, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.65,w,h*0.12,2,'#cc4444');
+      DrawUtils.roundRect(ctx,x+2,y+h*0.45,w*0.9,h*0.12,2,'#4466cc');
+      DrawUtils.roundRect(ctx,x-1,y+h*0.25,w*0.95,h*0.12,2,'#44aa44');
+      DrawUtils.roundRect(ctx,x+3,y+h*0.05,w*0.85,h*0.12,2,'#cc8844');
+      ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=0.5;
+      ctx.beginPath(); ctx.moveTo(x+8,y+h*0.08); ctx.lineTo(x+w*0.6,y+h*0.08); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+5,y+h*0.28); ctx.lineTo(x+w*0.5,y+h*0.28); ctx.stroke();
+    }},
+];
+
 // ==================== 关卡配置 ====================
 var ROOMS = [
   { id:'livingroom', name:'客厅', emoji:'🛋️', desc:'温馨客厅，猫咪入门级',
@@ -798,6 +1075,12 @@ var ROOMS = [
   { id:'bedroom', name:'卧室', emoji:'🛏️', desc:'安静卧室，狡猾猫出没',
     catCount:5, lives:2, behaviorMult:1.6,
     items:BEDROOM_ITEMS, disguises:BEDROOM_DISGUISES, bgType:'bedroom' },
+  { id:'bathroom', name:'浴室', emoji:'🛁', desc:'水汽弥漫，猫咪隐匿',
+    catCount:5, lives:2, behaviorMult:1.8,
+    items:BATHROOM_ITEMS, disguises:BATHROOM_DISGUISES, bgType:'bathroom' },
+  { id:'study', name:'书房', emoji:'📚', desc:'书海迷宫，大师级挑战',
+    catCount:6, lives:2, behaviorMult:2.0,
+    items:STUDY_ITEMS, disguises:STUDY_DISGUISES, bgType:'study' },
 ];
 
 // 关卡进度（尝试从 localStorage 读取）
@@ -806,7 +1089,7 @@ try {
   levelProgress = JSON.parse(localStorage.getItem('catHideProgress'));
 } catch(e) {}
 if (!levelProgress) {
-  levelProgress = { livingroom:{unlocked:true,stars:0}, kitchen:{unlocked:false,stars:0}, bedroom:{unlocked:false,stars:0} };
+  levelProgress = { livingroom:{unlocked:true,stars:0}, kitchen:{unlocked:false,stars:0}, bedroom:{unlocked:false,stars:0}, bathroom:{unlocked:false,stars:0}, study:{unlocked:false,stars:0} };
 }
 function saveProgress() {
   try { localStorage.setItem('catHideProgress', JSON.stringify(levelProgress)); } catch(e) {}
@@ -919,6 +1202,26 @@ var ROOM_LAYOUTS = {
   bedroom_extra: [
     {x:420, y:510}, {x:200, y:600}, {x:580, y:590}, {x:340, y:520},
     {x:520, y:670}, {x:160, y:670},
+  ],
+  bathroom: {
+    bathtub:{x:400, y:490}, toilet:{x:140, y:520}, sink_bath:{x:320, y:412},
+    shower:{x:600, y:412}, bath_shelf:{x:170, y:412},
+    towel_rack:{x:520, y:340}, bath_mat:{x:350, y:600, depth:500},
+    laundry_basket:{x:560, y:620},
+  },
+  bathroom_extra: [
+    {x:250, y:540}, {x:480, y:530}, {x:160, y:620}, {x:380, y:680}, {x:600, y:560},
+    {x:300, y:450}, {x:520, y:460}, {x:200, y:700},
+  ],
+  study: {
+    s_desk:{x:375, y:412}, s_bookcase:{x:140, y:412}, s_chair:{x:400, y:510},
+    s_lamp:{x:280, y:378, depth:412}, globe_study:{x:530, y:378, depth:412},
+    filing_cabinet:{x:600, y:530}, s_rug:{x:350, y:580, depth:490},
+    s_window_plant:{x:480, y:380, depth:412},
+  },
+  study_extra: [
+    {x:260, y:530}, {x:500, y:540}, {x:180, y:600}, {x:420, y:620}, {x:600, y:600},
+    {x:340, y:470}, {x:560, y:470}, {x:200, y:680}, {x:480, y:700},
   ],
 };
 
@@ -1617,11 +1920,58 @@ function update() {
   }
 }
 
+function drawBathroomBg(ctx) {
+  drawPerspectiveRoom(ctx, '#a8c8d8', '#b8d8e8', '#d0dde8', '#c0ccd8', '#8ab0c8');
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 0.5;
+  for (var ty = 0; ty < (BACK_B - BACK_T); ty += 30) {
+    ctx.beginPath(); ctx.moveTo(BACK_L, BACK_T + ty); ctx.lineTo(BACK_R, BACK_T + ty); ctx.stroke();
+  }
+  for (var tx = 0; tx < (BACK_R - BACK_L); tx += 40) {
+    ctx.beginPath(); ctx.moveTo(BACK_L + tx, BACK_T); ctx.lineTo(BACK_L + tx, BACK_B); ctx.stroke();
+  }
+  drawFloorGrid(ctx, 'rgba(0,0,0,0.06)', 8, 8);
+  var wL = BACK_L + (BACK_R - BACK_L) * 0.38;
+  var wR = BACK_L + (BACK_R - BACK_L) * 0.62;
+  var wT = BACK_T + (BACK_B - BACK_T) * 0.08;
+  var wB = BACK_T + (BACK_B - BACK_T) * 0.40;
+  ctx.fillStyle = '#5a4a3a'; ctx.fillRect(wL - 3, wT - 3, wR - wL + 6, wB - wT + 6);
+  ctx.fillStyle = 'rgba(200,230,255,0.5)'; ctx.fillRect(wL, wT, wR - wL, wB - wT);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(wL, wT, (wR - wL) * 0.4, wB - wT);
+  ctx.save(); ctx.globalAlpha = 0.04; ctx.fillStyle = '#fff';
+  for (var si = 0; si < 15; si++) {
+    var sx = BACK_L + 20 + ((si * 53) % (BACK_R - BACK_L - 40));
+    var sy = BACK_T + 30 + ((si * 37) % (BACK_B - BACK_T));
+    var sr = 15 + (si % 5) * 8;
+    ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+  drawBaseboard(ctx, '#90a8b8');
+  drawCeilingLight(ctx);
+}
+
+function drawStudyBg(ctx) {
+  drawPerspectiveRoom(ctx, '#5a4a38', '#6a5a48', '#6a5838', '#5a4828', '#3a3028');
+  drawWoodPlanks(ctx, 'rgba(40,25,10,0.08)', 'rgba(40,25,10,0.04)', 10);
+  ctx.fillStyle = 'rgba(180,150,100,0.06)';
+  for (var pi = 0; pi < 20; pi++) {
+    var px = BACK_L + 20 + ((pi * 41) % (BACK_R - BACK_L - 40));
+    var py = BACK_T + 15 + ((pi * 29) % (BACK_B - BACK_T - 30));
+    ctx.font = '8px serif'; ctx.fillText('❖', px, py);
+  }
+  drawWindow(ctx, 0.60, 0.85, 0.10, 0.55, '#6699bb', false);
+  drawBaseboard(ctx, '#4a3a28');
+  drawCeilingLight(ctx);
+  var glowPulse = 1.0 + Math.sin(Date.now() / 2200) * 0.06;
+  drawWarmGlow(ctx, 300, 420, 120 * glowPulse, 'rgba(255,210,120,0.06)');
+}
+
 // ==================== 渲染 ====================
 function drawRoomBackground(ctx) {
   var bgType = ROOMS[game.currentRoomIdx].bgType;
   if (bgType === 'kitchen') return drawKitchenBg(ctx);
   if (bgType === 'bedroom') return drawBedroomBg(ctx);
+  if (bgType === 'bathroom') return drawBathroomBg(ctx);
+  if (bgType === 'study') return drawStudyBg(ctx);
   return drawLivingroomBg(ctx);
 }
 
