@@ -72,6 +72,8 @@ function GameEngine() {
   this._lastFoundTime = 0;
   // 粒子系统
   this.particles = [];
+  // 新手引导
+  this.tutorial = null; // { step, timer, tapTarget }
   // 动画帧 ID
   this._rafId = null;
   // 回调
@@ -219,6 +221,12 @@ GameEngine.prototype.startGame = function(roomIdx) {
     });
   });
 
+  // 新手引导：第一次玩第一关时触发
+  this.tutorial = null;
+  if (this.currentRoomIdx === 0 && !this._hasTutorialDone()) {
+    this.tutorial = { step: 0, timer: 0, tapTarget: null, skipBtn: null };
+  }
+
   this.lastTime = Date.now();
   this._startLoop();
 };
@@ -267,6 +275,11 @@ GameEngine.prototype._update = function() {
   if (this.state === 'playing' || this.state === 'intro') {
     this._updateCatBehaviors(dt);
     this._updateFakeWobbles(dt);
+  }
+
+  // 新手引导
+  if (this.tutorial && this.state === 'playing') {
+    this._updateTutorial(dt);
   }
 
   // 找到猫动画
@@ -614,6 +627,11 @@ GameEngine.prototype._render = function() {
     this._drawEndScreen(ctx);
   }
 
+  // 新手引导覆盖层
+  if (this.tutorial && this.state !== 'win' && this.state !== 'lose') {
+    this._drawTutorial(ctx);
+  }
+
   ctx.restore();
 };
 
@@ -874,6 +892,214 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
   this.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
 };
 
+// ========== 新手引导 ==========
+
+// 引导步骤配置
+var TUT_STEPS = [
+  { id: 'observe',  text: '仔细看！有些物品在微微晃动...', sub: '那可能是猫咪伪装的！', duration: 0, waitTap: false },
+  { id: 'tap',      text: '点击那个晃动的物品！', sub: '👆 试试看', duration: 0, waitTap: true },
+  { id: 'found',    text: '太棒了！你找到了一只猫！🎉', sub: '', duration: 2.0, waitTap: false },
+  { id: 'clues',    text: '猫咪会露出4种破绽：', sub: '💫晃动  🐾尾巴  💬说话  👀偷看', duration: 0, waitTap: false },
+  { id: 'tools',    text: '左下角有道具帮助你：', sub: '🔦激光笔引猫注意  🌿猫薄荷让猫兴奋', duration: 0, waitTap: false },
+  { id: 'go',       text: '继续找出剩下的猫咪吧！', sub: '加油！', duration: 1.5, waitTap: false },
+];
+
+GameEngine.prototype._hasTutorialDone = function() {
+  try { return !!tt.getStorageSync('catHideTutorial'); } catch(e) { return false; }
+};
+
+GameEngine.prototype._saveTutorialDone = function() {
+  try { tt.setStorageSync('catHideTutorial', '1'); } catch(e) {}
+};
+
+GameEngine.prototype._updateTutorial = function(dt) {
+  if (!this.tutorial) return;
+  var tut = this.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) { this.tutorial = null; return; }
+
+  tut.timer += dt;
+
+  // Step 0 (observe): 强制第一只猫持续晃动，等3秒后自动进入下一步
+  if (step.id === 'observe') {
+    var cat = this.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = true; cat.wobbleElapsed = (cat.wobbleElapsed + dt) % 1.0;
+      cat.wobbleDuration = 999; cat.wobbleStrength = 5;
+    }
+    if (tut.timer >= 3.0) { tut.step++; tut.timer = 0; }
+  }
+
+  // Step 1 (tap): 保持猫晃动，设置点击目标，等玩家点击
+  if (step.id === 'tap') {
+    var cat = this.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = true; cat.wobbleElapsed = (cat.wobbleElapsed + dt) % 1.0;
+      cat.wobbleDuration = 999; cat.wobbleStrength = 5;
+      tut.tapTarget = cat;
+    } else {
+      // 玩家已经找到了（通过正常点击逻辑），跳到 found 步骤
+      tut.step = 2; tut.timer = 0;
+    }
+  }
+
+  // Step 2 (found): 自动等待后进入下一步
+  if (step.id === 'found' && tut.timer >= step.duration) {
+    tut.step++; tut.timer = 0;
+  }
+
+  // Step 3 (clues): 点击继续
+  // Step 4 (tools): 点击继续 — 高亮工具栏区域
+
+  // Step 5 (go): 自动等待后结束引导
+  if (step.id === 'go' && tut.timer >= step.duration) {
+    this._saveTutorialDone();
+    this.tutorial = null;
+    // 恢复第一只猫的正常行为
+    var cat = this.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = false;
+      cat.wobbleTimer = catSystem.randRange(cat.personality.wobbleCooldown);
+      cat.wobbleStrength = cat.personality.wobbleStrength;
+    }
+  }
+};
+
+GameEngine.prototype._drawTutorial = function(ctx) {
+  if (!this.tutorial) return;
+  var tut = this.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) return;
+
+  // 半透明遮罩（非点击区域）
+  ctx.save();
+
+  // 如果有点击目标（tap步骤），在目标周围开一个"洞"
+  if (step.id === 'tap' && tut.tapTarget) {
+    var cat = tut.tapTarget;
+    var cx = cat.x + cat.w / 2, cy = cat.y + cat.h / 2;
+    var r = Math.max(cat.w, cat.h) * 0.65;
+
+    // 画遮罩但挖洞
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2, true); // 反向圆弧 = 挖洞
+    ctx.fill();
+
+    // 脉动光圈
+    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
+
+    // 手指图标
+    var fingerY = cy + r + 18 + Math.sin(Date.now() / 400) * 6;
+    ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('👆', cx, fingerY);
+  } else if (step.id === 'tools') {
+    // 高亮左下角工具栏区域
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.rect(5, VIEW_H - 80, 130, 70); // 工具栏区域反向矩形
+    ctx.fill('evenodd');
+    // 工具栏光圈
+    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
+    ctx.lineWidth = 2;
+    draw.roundRect(ctx, 5, VIEW_H - 80, 130, 70, 14, null, ctx.strokeStyle);
+  } else if (step.id === 'observe') {
+    // observe 步骤：轻遮罩 + 箭头指向第一只猫
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    var cat = this.cats[0];
+    if (cat && !cat.found) {
+      var cx = cat.x + cat.w / 2, cy = cat.y - 15;
+      var bobY = Math.sin(Date.now() / 300) * 6;
+      ctx.font = '24px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#ffd700';
+      ctx.fillText('👇', cx, cy + bobY);
+    }
+  } else {
+    // 其他步骤：轻遮罩
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  }
+
+  // 文字气泡
+  var textY = VIEW_H * 0.18;
+  var boxW = 460, boxH = step.sub ? 90 : 60;
+  var boxX = VIEW_W / 2 - boxW / 2;
+  draw.roundRect(ctx, boxX, textY, boxW, boxH, 18, 'rgba(0,0,0,0.8)');
+  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
+  draw.roundRect(ctx, boxX, textY, boxW, boxH, 18, null, 'rgba(255,215,0,0.5)');
+
+  ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(step.text, VIEW_W / 2, textY + (step.sub ? 28 : boxH / 2));
+  if (step.sub) {
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd';
+    ctx.fillText(step.sub, VIEW_W / 2, textY + 58);
+  }
+
+  // 点击继续提示（非自动步骤 & 非等待特定点击）
+  if (!step.waitTap && step.duration === 0) {
+    var alpha = 0.4 + Math.sin(Date.now() / 500) * 0.3;
+    ctx.globalAlpha = alpha;
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
+    ctx.fillText('点击任意处继续', VIEW_W / 2, textY + boxH + 20);
+    ctx.globalAlpha = 1;
+  }
+
+  // 跳过按钮
+  var skipX = VIEW_W - 80, skipY = textY - 30, skipW = 60, skipH = 28;
+  ctx.globalAlpha = 0.6;
+  draw.roundRect(ctx, skipX, skipY, skipW, skipH, 10, 'rgba(255,255,255,0.15)');
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center';
+  ctx.fillText('跳过', skipX + skipW / 2, skipY + skipH / 2);
+  ctx.globalAlpha = 1;
+  tut.skipBtn = { x: skipX, y: skipY, w: skipW, h: skipH };
+
+  ctx.restore();
+};
+
+GameEngine.prototype._handleTutorialTap = function(vx, vy) {
+  if (!this.tutorial) return false;
+  var tut = this.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) return false;
+
+  // 跳过按钮
+  if (tut.skipBtn) {
+    var sb = tut.skipBtn;
+    if (vx >= sb.x && vx <= sb.x + sb.w && vy >= sb.y && vy <= sb.y + sb.h) {
+      this._saveTutorialDone();
+      this.tutorial = null;
+      // 恢复猫行为
+      var cat = this.cats[0];
+      if (cat && !cat.found) {
+        cat.wobbleActive = false;
+        cat.wobbleTimer = catSystem.randRange(cat.personality.wobbleCooldown);
+        cat.wobbleStrength = cat.personality.wobbleStrength;
+      }
+      return true;
+    }
+  }
+
+  // 等待特定点击的步骤（tap）：让正常的点击逻辑处理
+  if (step.waitTap) return false;
+
+  // 自动计时步骤：忽略点击
+  if (step.duration > 0) return true;
+
+  // 点击继续步骤
+  tut.step++;
+  tut.timer = 0;
+  return true;
+};
+
 // ========== 粒子 & 提示 ==========
 
 GameEngine.prototype._spawnParticles = function(cx, cy) {
@@ -955,6 +1181,9 @@ GameEngine.prototype.handleTouchEnd = function(x, y) {
 };
 
 GameEngine.prototype._handleTap = function(vx, vy) {
+  // 新手引导拦截（返回 true = 引导消费了这次点击）
+  if (this.tutorial && this._handleTutorialTap(vx, vy)) return;
+
   // 结算画面按钮
   if (this.state === 'win' || this.state === 'lose') {
     if (this.retryBtn) {
@@ -1028,7 +1257,17 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     this.hintTimer = 0; this.hintCat = null;
     // 生成庆祝粒子
     this._spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
+    // 引导模式：找到第一只猫后进入 found 步骤
+    if (this.tutorial && this.tutorial.step <= 1) {
+      this.tutorial.step = 2; this.tutorial.timer = 0;
+    }
   } else {
+    // 引导模式 tap 步骤：点错不扣血，提示重试
+    if (this.tutorial && this.tutorial.step === 1) {
+      this.toast = '不是这个哦，找晃动的那个！';
+      this.toastTimer = 1.0;
+      return;
+    }
     this.lives--;
     this.mistakes++;
     this.wrongItem = hit;

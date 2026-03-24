@@ -1162,6 +1162,8 @@ var game = {
   _lastFoundTime: 0,
   // 粒子系统
   particles: [],
+  // 新手引导
+  tutorial: null,
 };
 
 // ==================== 初始化 ====================
@@ -1256,7 +1258,20 @@ function initGame(roomIdx) {
   game.camX = 0;
   game.camY = 0;
 
+  // 新手引导：第一次玩第一关时触发
+  game.tutorial = null;
+  if (game.currentRoomIdx === 0 && !hasTutorialDone()) {
+    game.tutorial = { step: 0, timer: 0, tapTarget: null, skipBtn: null };
+  }
+
   game.lastTime = Date.now();
+}
+
+function hasTutorialDone() {
+  try { return !!localStorage.getItem('catHideTutorial'); } catch(e) { return false; }
+}
+function saveTutorialDone() {
+  try { localStorage.setItem('catHideTutorial', '1'); } catch(e) {}
 }
 
 // 狡猾猫制造假穿帮
@@ -1362,6 +1377,11 @@ function update() {
     });
     // 狡猾猫的假穿帮：让附近的普通物品偶尔也晃一下
     updateFakeWobbles(dt);
+  }
+
+  // 新手引导
+  if (game.tutorial && game.state === 'playing') {
+    updateTutorial(dt);
   }
 
   // 找到猫动画
@@ -2048,6 +2068,11 @@ function render() {
     drawEndScreen(ctx);
   }
 
+  // 新手引导覆盖层
+  if (game.tutorial && game.state !== 'win' && game.state !== 'lose') {
+    drawTutorial(ctx);
+  }
+
   ctx.restore();
 }
 
@@ -2330,6 +2355,156 @@ function drawHint(ctx) {
   ctx.restore();
 }
 
+// ==================== 新手引导 ====================
+var TUT_STEPS = [
+  { id: 'observe',  text: '仔细看！有些物品在微微晃动...', sub: '那可能是猫咪伪装的！', duration: 0, waitTap: false },
+  { id: 'tap',      text: '点击那个晃动的物品！', sub: '👆 试试看', duration: 0, waitTap: true },
+  { id: 'found',    text: '太棒了！你找到了一只猫！🎉', sub: '', duration: 2.0, waitTap: false },
+  { id: 'clues',    text: '猫咪会露出4种破绽：', sub: '💫晃动  🐾尾巴  💬说话  👀偷看', duration: 0, waitTap: false },
+  { id: 'tools',    text: '左下角有道具帮助你：', sub: '🔦激光笔引猫注意  🌿猫薄荷让猫兴奋', duration: 0, waitTap: false },
+  { id: 'go',       text: '继续找出剩下的猫咪吧！', sub: '加油！', duration: 1.5, waitTap: false },
+];
+
+function updateTutorial(dt) {
+  if (!game.tutorial) return;
+  var tut = game.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) { game.tutorial = null; return; }
+
+  tut.timer += dt;
+
+  if (step.id === 'observe') {
+    var cat = game.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = true; cat.wobbleElapsed = (cat.wobbleElapsed + dt) % 1.0;
+      cat.wobbleDuration = 999; cat.wobbleStrength = 5;
+    }
+    if (tut.timer >= 3.0) { tut.step++; tut.timer = 0; }
+  }
+
+  if (step.id === 'tap') {
+    var cat = game.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = true; cat.wobbleElapsed = (cat.wobbleElapsed + dt) % 1.0;
+      cat.wobbleDuration = 999; cat.wobbleStrength = 5;
+      tut.tapTarget = cat;
+    } else {
+      tut.step = 2; tut.timer = 0;
+    }
+  }
+
+  if (step.id === 'found' && tut.timer >= step.duration) { tut.step++; tut.timer = 0; }
+  if (step.id === 'go' && tut.timer >= step.duration) {
+    saveTutorialDone();
+    game.tutorial = null;
+    var cat = game.cats[0];
+    if (cat && !cat.found) {
+      cat.wobbleActive = false;
+      cat.wobbleTimer = randRange(cat.personality.wobbleCooldown);
+      cat.wobbleStrength = cat.personality.wobbleStrength;
+    }
+  }
+}
+
+function drawTutorial(ctx) {
+  if (!game.tutorial) return;
+  var tut = game.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) return;
+
+  ctx.save();
+  if (step.id === 'tap' && tut.tapTarget) {
+    var cat = tut.tapTarget;
+    var cx = cat.x + cat.w / 2, cy = cat.y + cat.h / 2;
+    var r = Math.max(cat.w, cat.h) * 0.65;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2, true); ctx.fill();
+    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
+    var fingerY = cy + r + 18 + Math.sin(Date.now() / 400) * 6;
+    ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#fff'; ctx.fillText('👆', cx, fingerY);
+  } else if (step.id === 'tools') {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.rect(5, VIEW_H - 80, 130, 70); ctx.fill('evenodd');
+    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')'; ctx.lineWidth = 2;
+    DrawUtils.roundRect(ctx, 5, VIEW_H - 80, 130, 70, 14, null, ctx.strokeStyle);
+  } else if (step.id === 'observe') {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    var cat = game.cats[0];
+    if (cat && !cat.found) {
+      var cx = cat.x + cat.w / 2, cy = cat.y - 15;
+      var bobY = Math.sin(Date.now() / 300) * 6;
+      ctx.font = '24px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#ffd700'; ctx.fillText('👇', cx, cy + bobY);
+    }
+  } else {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  }
+
+  var textY = VIEW_H * 0.18;
+  var boxW = 460, boxH = step.sub ? 90 : 60;
+  var boxX = VIEW_W / 2 - boxW / 2;
+  DrawUtils.roundRect(ctx, boxX, textY, boxW, boxH, 18, 'rgba(0,0,0,0.8)');
+  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
+  DrawUtils.roundRect(ctx, boxX, textY, boxW, boxH, 18, null, 'rgba(255,215,0,0.5)');
+  ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(step.text, VIEW_W / 2, textY + (step.sub ? 28 : boxH / 2));
+  if (step.sub) {
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd';
+    ctx.fillText(step.sub, VIEW_W / 2, textY + 58);
+  }
+
+  if (!step.waitTap && step.duration === 0) {
+    var alpha = 0.4 + Math.sin(Date.now() / 500) * 0.3;
+    ctx.globalAlpha = alpha;
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
+    ctx.fillText('点击任意处继续', VIEW_W / 2, textY + boxH + 20);
+    ctx.globalAlpha = 1;
+  }
+
+  var skipX = VIEW_W - 80, skipY = textY - 30, skipW = 60, skipH = 28;
+  ctx.globalAlpha = 0.6;
+  DrawUtils.roundRect(ctx, skipX, skipY, skipW, skipH, 10, 'rgba(255,255,255,0.15)');
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center';
+  ctx.fillText('跳过', skipX + skipW / 2, skipY + skipH / 2);
+  ctx.globalAlpha = 1;
+  tut.skipBtn = { x: skipX, y: skipY, w: skipW, h: skipH };
+  ctx.restore();
+}
+
+function handleTutorialTap(vx, vy) {
+  if (!game.tutorial) return false;
+  var tut = game.tutorial;
+  var step = TUT_STEPS[tut.step];
+  if (!step) return false;
+
+  if (tut.skipBtn) {
+    var sb = tut.skipBtn;
+    if (vx >= sb.x && vx <= sb.x + sb.w && vy >= sb.y && vy <= sb.y + sb.h) {
+      saveTutorialDone(); game.tutorial = null;
+      var cat = game.cats[0];
+      if (cat && !cat.found) {
+        cat.wobbleActive = false;
+        cat.wobbleTimer = randRange(cat.personality.wobbleCooldown);
+        cat.wobbleStrength = cat.personality.wobbleStrength;
+      }
+      return true;
+    }
+  }
+
+  if (step.waitTap) return false;
+  if (step.duration > 0) return true;
+  tut.step++; tut.timer = 0;
+  return true;
+}
+
 // ==================== 触控处理 ====================
 function screenToView(sx, sy) {
   var rect = game.canvas.getBoundingClientRect();
@@ -2360,6 +2535,9 @@ function handleTouchEnd(sx, sy) {
 }
 
 function handleTap(vx, vy) {
+  // 新手引导拦截
+  if (game.tutorial && handleTutorialTap(vx, vy)) return;
+
   // 结算画面按钮
   if (game.state === 'win' || game.state === 'lose') {
     // 重玩
@@ -2435,7 +2613,16 @@ function handleTap(vx, vy) {
     game._lastFoundTime = 0;
     game.hintTimer = 0; game.hintCat = null;
     spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
+    // 引导模式：找到第一只猫后进入 found 步骤
+    if (game.tutorial && game.tutorial.step <= 1) {
+      game.tutorial.step = 2; game.tutorial.timer = 0;
+    }
   } else {
+    // 引导模式 tap 步骤：点错不扣血
+    if (game.tutorial && game.tutorial.step === 1) {
+      game.toast = '不是这个哦，找晃动的那个！'; game.toastTimer = 1.0;
+      return;
+    }
     // 点错了
     game.lives--; game.mistakes++;
     game.wrongItem = hit;
