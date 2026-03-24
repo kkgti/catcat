@@ -209,8 +209,10 @@ GameEngine.prototype.startGame = function(roomIdx) {
 };
 
 GameEngine.prototype._startLoop = function() {
+  this._running = true;
   var self = this;
   function loop() {
+    if (!self._running) return;
     self._update();
     self._render();
     if (self.ctx.requestAnimationFrame) {
@@ -221,6 +223,7 @@ GameEngine.prototype._startLoop = function() {
 };
 
 GameEngine.prototype.stop = function() {
+  this._running = false;
   if (this._rafId != null && this.ctx.cancelAnimationFrame) {
     this.ctx.cancelAnimationFrame(this._rafId);
   }
@@ -264,11 +267,14 @@ GameEngine.prototype._update = function() {
         this.state = 'win';
         var stars = this._calcStars();
         var pid = scene.ROOMS[this.currentRoomIdx].id;
+        if (!this.levelProgress[pid]) this.levelProgress[pid] = { unlocked: true, stars: 0 };
         if (stars > this.levelProgress[pid].stars) {
           this.levelProgress[pid].stars = stars;
         }
         if (this.currentRoomIdx < scene.ROOMS.length - 1) {
-          this.levelProgress[scene.ROOMS[this.currentRoomIdx + 1].id].unlocked = true;
+          var nextId = scene.ROOMS[this.currentRoomIdx + 1].id;
+          if (!this.levelProgress[nextId]) this.levelProgress[nextId] = { unlocked: false, stars: 0 };
+          this.levelProgress[nextId].unlocked = true;
         }
         this._saveProgress();
       } else {
@@ -526,6 +532,12 @@ GameEngine.prototype._render = function() {
   if (this.catnipActive) this._drawCatnipEffect(ctx);
 
   ctx.restore();
+  // 关闭外层 s*dpr+shake 变换，HUD/工具栏/Toast/结算在干净的 s*dpr 坐标下绘制
+  ctx.restore();
+
+  // 重新应用 s*dpr 变换（不含 shake），让 HUD 坐标与点击坐标对齐
+  ctx.save();
+  ctx.scale(s*dpr, s*dpr);
 
   // HUD
   this._drawHUD(ctx);
@@ -662,7 +674,7 @@ GameEngine.prototype._drawCatnipEffect = function(ctx) {
   var alpha = progress < 0.2 ? progress/0.2 * 0.6 : progress > 0.7 ? (1-progress)/0.3 * 0.6 : 0.6;
   ctx.save(); ctx.globalAlpha = alpha;
   ctx.beginPath(); ctx.arc(this.catnipX, this.catnipY, this.catnipRadius, 0, Math.PI*2);
-  ctx.strokeStyle = '#66dd66'; ctx.lineWidth = 2; ctx.setLineDash([8,4]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = '#66dd66'; ctx.lineWidth = 2; ctx.stroke();
   var t = Date.now() / 1000;
   for (var i = 0; i < 6; i++) {
     var angle = (i/6)*Math.PI*2 + t*0.5;

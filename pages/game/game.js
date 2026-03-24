@@ -76,7 +76,8 @@ Page({
   onTouchEnd: function(e) {
     if (!this.engine) return;
     // touchend 时 touches 为空，用 changedTouches
-    var touch = e.changedTouches[0];
+    var touch = e.changedTouches && e.changedTouches[0];
+    if (!touch) return;
     this.engine.handleTouchEnd(touch.x, touch.y);
   },
 
