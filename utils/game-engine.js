@@ -1,64 +1,78 @@
 /**
- * 游戏引擎 —— 状态机、渲染循环、碰撞检测
- * 阶段1：核心可玩版本
+ * 游戏引擎 —— 状态机、渲染循环、碰撞检测、工具系统
+ * 同步自 preview.html
  */
 var draw = require('./draw-utils');
 var scene = require('./scene');
 var catSystem = require('./cat-system');
 
-// 游戏状态
-var STATE = {
-  READY: 'ready',       // 准备开始
-  PLAYING: 'playing',   // 游戏中
-  FOUND_ANIM: 'found_anim', // 找到猫的动画中
-  WRONG_ANIM: 'wrong_anim', // 点错的动画中
-  WIN: 'win',           // 全部找到
-  LOSE: 'lose',         // 生命耗尽
-};
+var VIEW_W = scene.VIEW_W;
+var VIEW_H = scene.VIEW_H;
+var ITEM_SCALE = scene.ITEM_SCALE;
 
 function GameEngine() {
-  this.state = STATE.READY;
+  this.state = 'ready';
   this.ctx = null;
   this.canvasW = 0;
   this.canvasH = 0;
   this.scale = 1;
-
-  // 逻辑画布尺寸
-  this.LOGIC_W = 750;
-  this.LOGIC_H = 900;
-
-  // 游戏数据
+  this.dpr = 1;
   this.lives = 3;
   this.maxLives = 3;
-  this.timer = 90;
-  this.score = 0;
   this.catCount = 4;
   this.foundCount = 0;
-
-  // 猫系统数据
+  this.mistakes = 0;
+  this.currentRoomIdx = 0;
   this.cats = [];
   this.allItems = [];
-  this.replacedIds = [];
-
-  // 动画状态
   this.animTimer = 0;
   this.currentFoundCat = null;
   this.wrongItem = null;
   this.wrongAnimTimer = 0;
-
-  // 时间
   this.lastTime = 0;
-  this.timerAccum = 0;
-
-  // 提示文字
   this.toast = '';
   this.toastTimer = 0;
-
-  // 回调
-  this.onGameEnd = null;
-
+  this.introTimer = 0;
+  this.shakeTimer = 0;
+  this.shakeX = 0;
+  this.shakeY = 0;
+  // 假穿帮
+  this.fakeWobbles = [];
+  this.fakeWobbleTimer = 0;
+  // 工具系统
+  this.activeTool = null;
+  this.laserCooldown = 0;
+  this.laserMaxCD = 12;
+  this.laserActive = false;
+  this.laserX = 0;
+  this.laserY = 0;
+  this.laserTargetX = 0;
+  this.laserTargetY = 0;
+  this.laserTimer = 0;
+  this.catnipCooldown = 0;
+  this.catnipMaxCD = 18;
+  this.catnipActive = false;
+  this.catnipX = 0;
+  this.catnipY = 0;
+  this.catnipTimer = 0;
+  this.catnipRadius = 200;
+  this.toolBtns = [];
+  // 结算按钮
+  this.retryBtn = null;
+  this.nextLevelBtn = null;
+  this.selectBtn = null;
+  // 关卡进度
+  this.levelProgress = null;
   // 动画帧 ID
   this._rafId = null;
+  // 回调
+  this.onGameEnd = null;
+  this.onShowLevelSelect = null;
+  // 触控状态
+  this._touchStartX = 0;
+  this._touchStartY = 0;
+  this._touchStartTime = 0;
+  this._isDragging = false;
 }
 
 GameEngine.prototype.init = function(ctx, canvasW, canvasH, dpr) {
@@ -66,32 +80,131 @@ GameEngine.prototype.init = function(ctx, canvasW, canvasH, dpr) {
   this.canvasW = canvasW;
   this.canvasH = canvasH;
   this.dpr = dpr || 1;
-  this.scale = canvasW / this.LOGIC_W;
-  // 调整逻辑高度以适配屏幕比例
-  this.LOGIC_H = canvasH / this.scale;
+  this.scale = canvasW / VIEW_W;
+  // 加载进度
+  this._loadProgress();
 };
 
-GameEngine.prototype.startGame = function() {
-  this.state = STATE.PLAYING;
-  this.lives = 3;
-  this.timer = 90;
-  this.score = 0;
+GameEngine.prototype._loadProgress = function() {
+  try {
+    var data = tt.getStorageSync('catHideProgress');
+    if (data) {
+      this.levelProgress = JSON.parse(data);
+    }
+  } catch(e) {}
+  if (!this.levelProgress) {
+    this.levelProgress = {
+      livingroom: {unlocked:true, stars:0},
+      kitchen: {unlocked:false, stars:0},
+      bedroom: {unlocked:false, stars:0},
+    };
+  }
+};
+
+GameEngine.prototype._saveProgress = function() {
+  try {
+    tt.setStorageSync('catHideProgress', JSON.stringify(this.levelProgress));
+  } catch(e) {}
+};
+
+GameEngine.prototype.startGame = function(roomIdx) {
+  if (roomIdx !== undefined) this.currentRoomIdx = roomIdx;
+  var room = scene.ROOMS[this.currentRoomIdx];
+  var mult = room.behaviorMult;
+
+  this.state = 'intro';
+  this.catCount = room.catCount;
+  this.maxLives = room.lives;
+  this.lives = room.lives;
   this.foundCount = 0;
+  this.mistakes = 0;
   this.toast = '';
   this.toastTimer = 0;
   this.animTimer = 0;
   this.currentFoundCat = null;
   this.wrongItem = null;
+  this.shakeTimer = 0;
+  this.introTimer = 2.5;
+  this.fakeWobbles = [];
+  this.fakeWobbleTimer = 5 + Math.random() * 5;
+  this.activeTool = null;
+  this.retryBtn = null;
+  this.nextLevelBtn = null;
+  this.selectBtn = null;
+  this.laserCooldown = 0;
+  this.laserActive = false;
+  this.laserTimer = 0;
+  this.catnipCooldown = 0;
+  this.catnipActive = false;
+  this.catnipTimer = 0;
 
-  // 生成猫
-  var result = catSystem.generateCats(this.catCount);
-  this.cats = result.cats;
-  this.allItems = result.allItems;
-  this.replacedIds = result.replacedIds;
+  var roomId = room.id;
+
+  // 放置房间物品
+  var roomItems = catSystem.placeItems(room.items, null, roomId);
+
+  // 随机选猫伪装模板
+  var disguises = catSystem.shuffle(room.disguises).slice(0, this.catCount);
+  var occupied = roomItems.map(function(it){ return {x:it.x,y:it.y,w:it.w,h:it.h}; });
+  var usedQuotes = [];
+  this.cats = [];
+
+  for (var i = 0; i < disguises.length; i++) {
+    var tmpl = disguises[i];
+    var catPlaced = catSystem.placeItems([tmpl], occupied, roomId);
+    var cp = catPlaced[0];
+    occupied.push({x:cp.x,y:cp.y,w:cp.w,h:cp.h});
+    var personality = catSystem.CAT_PERSONALITIES[i % catSystem.CAT_PERSONALITIES.length];
+    this.cats.push({
+      id: 'cat_'+i,
+      x: cp.x, y: cp.y, w: cp.w, h: cp.h,
+      origW: cp.origW, origH: cp.origH, scale: cp.scale,
+      baseX: cp.baseX, baseY: cp.baseY, depth: cp.depth,
+      drawFn: cp.draw, name: cp.name,
+      quote: catSystem.pickQuote(usedQuotes),
+      color: personality.color,
+      personality: personality,
+      found: false, foundAnim: 0,
+      behaviorMult: mult,
+      wobbleTimer: catSystem.randRange(personality.wobbleCooldown) * mult,
+      wobbleActive: false, wobbleElapsed: 0,
+      wobbleDuration: catSystem.randRange(personality.wobbleDuration),
+      wobbleCooldown: personality.wobbleCooldown,
+      wobbleStrength: personality.wobbleStrength,
+      tailTimer: catSystem.randRange(personality.tailCooldown) * mult,
+      tailActive: false, tailElapsed: 0,
+      tailDuration: catSystem.randRange(personality.tailDuration),
+      bubbleTimer: catSystem.randRange(personality.bubbleCooldown) * mult,
+      bubbleActive: false, bubbleElapsed: 0,
+      bubbleDuration: catSystem.randRange(personality.bubbleDuration),
+      bubbleText: '',
+      eyeTimer: catSystem.randRange(personality.eyeCooldown) * mult,
+      eyeActive: false, eyeElapsed: 0,
+      eyeDuration: catSystem.randRange(personality.eyeDuration),
+    });
+  }
+
+  // 合并所有物品
+  this.allItems = [];
+  var self = this;
+  roomItems.forEach(function(it){
+    self.allItems.push({
+      id:it.id, name:it.name, zone:it.zone, x:it.x, y:it.y, w:it.w, h:it.h,
+      origW:it.origW, origH:it.origH, scale:it.scale,
+      baseX:it.baseX, baseY:it.baseY, depth:it.depth,
+      drawFn:it.draw, isCat:false
+    });
+  });
+  this.cats.forEach(function(cat){
+    self.allItems.push({
+      id:cat.id, name:cat.name, zone:'floor', x:cat.x, y:cat.y, w:cat.w, h:cat.h,
+      origW:cat.origW, origH:cat.origH, scale:cat.scale,
+      baseX:cat.baseX, baseY:cat.baseY, depth:cat.depth,
+      drawFn:cat.drawFn, isCat:true, catRef:cat
+    });
+  });
 
   this.lastTime = Date.now();
-  this.timerAccum = 0;
-
   this._startLoop();
 };
 
@@ -100,341 +213,719 @@ GameEngine.prototype._startLoop = function() {
   function loop() {
     self._update();
     self._render();
-    self._rafId = self.ctx.requestAnimationFrame
-      ? self.ctx.requestAnimationFrame(loop)
-      : requestAnimationFrame(loop);
+    if (self.ctx.requestAnimationFrame) {
+      self._rafId = self.ctx.requestAnimationFrame(loop);
+    }
   }
   loop();
 };
 
 GameEngine.prototype.stop = function() {
-  if (this._rafId != null) {
-    if (this.ctx.cancelAnimationFrame) {
-      this.ctx.cancelAnimationFrame(this._rafId);
-    } else {
-      cancelAnimationFrame(this._rafId);
-    }
-    this._rafId = null;
+  if (this._rafId != null && this.ctx.cancelAnimationFrame) {
+    this.ctx.cancelAnimationFrame(this._rafId);
   }
+  this._rafId = null;
 };
 
 // ========== 更新逻辑 ==========
 
 GameEngine.prototype._update = function() {
   var now = Date.now();
-  var dt = (now - this.lastTime) / 1000;
+  var dt = Math.min((now - this.lastTime)/1000, 0.1);
   this.lastTime = now;
 
-  if (this.state === STATE.PLAYING) {
-    // 倒计时（柔性，不会直接导致失败，但影响评分）
-    this.timerAccum += dt;
-    if (this.timerAccum >= 1) {
-      this.timerAccum -= 1;
-      if (this.timer > 0) this.timer--;
+  // 开场提示
+  if (this.state === 'intro') {
+    this.introTimer -= dt;
+    if (this.introTimer <= 0) {
+      this.state = 'playing';
+      var rm = scene.ROOMS[this.currentRoomIdx];
+      this.toast = rm.emoji + ' ' + rm.name + ' — 找出' + rm.catCount + '只猫!';
+      this.toastTimer = 2.5;
     }
   }
 
-  // 找到猫的动画
-  if (this.state === STATE.FOUND_ANIM) {
+  // 猫穿帮行为更新
+  if (this.state === 'playing' || this.state === 'intro') {
+    this._updateCatBehaviors(dt);
+    this._updateFakeWobbles(dt);
+  }
+
+  // 找到猫动画
+  if (this.state === 'found_anim') {
     this.animTimer -= dt;
     if (this.currentFoundCat) {
-      this.currentFoundCat.foundAnim = Math.min(1, 1 - this.animTimer / 1.2);
+      this.currentFoundCat.foundAnim = Math.min(1, 1 - this.animTimer/1.5);
     }
     if (this.animTimer <= 0) {
-      this.state = STATE.PLAYING;
+      if (this.currentFoundCat) this.currentFoundCat.foundAnim = 1;
       this.currentFoundCat = null;
-      // 检查是否全部找到
       if (this.foundCount >= this.cats.length) {
-        this.state = STATE.WIN;
-        this._onEnd();
+        this.state = 'win';
+        var stars = this._calcStars();
+        var pid = scene.ROOMS[this.currentRoomIdx].id;
+        if (stars > this.levelProgress[pid].stars) {
+          this.levelProgress[pid].stars = stars;
+        }
+        if (this.currentRoomIdx < scene.ROOMS.length - 1) {
+          this.levelProgress[scene.ROOMS[this.currentRoomIdx + 1].id].unlocked = true;
+        }
+        this._saveProgress();
+      } else {
+        this.state = 'playing';
       }
     }
   }
 
-  // 点错的动画
-  if (this.state === STATE.WRONG_ANIM) {
+  // 点错动画
+  if (this.state === 'wrong_anim') {
     this.wrongAnimTimer -= dt;
     if (this.wrongAnimTimer <= 0) {
       this.wrongItem = null;
-      if (this.lives <= 0) {
-        this.state = STATE.LOSE;
-        this._onEnd();
-      } else {
-        this.state = STATE.PLAYING;
-      }
+      this.state = this.lives <= 0 ? 'lose' : 'playing';
     }
   }
 
-  // Toast 提示
-  if (this.toastTimer > 0) {
-    this.toastTimer -= dt;
-    if (this.toastTimer <= 0) this.toast = '';
+  // 工具冷却
+  if (this.laserCooldown > 0) this.laserCooldown -= dt;
+  if (this.catnipCooldown > 0) this.catnipCooldown -= dt;
+
+  // 激光笔效果
+  if (this.laserActive) {
+    this.laserTimer -= dt;
+    this.laserX += (this.laserTargetX - this.laserX) * 0.15;
+    this.laserY += (this.laserTargetY - this.laserY) * 0.15;
+    var self = this;
+    this.cats.forEach(function(cat) {
+      if (cat.found) return;
+      var dx = (cat.x+cat.w/2) - self.laserX, dy = (cat.y+cat.h/2) - self.laserY;
+      if (Math.sqrt(dx*dx+dy*dy) < 160) {
+        cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = 1.5;
+        if (!cat.wobbleActive) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = 0.8; }
+      }
+    });
+    if (this.laserTimer <= 0) { this.laserActive = false; this.activeTool = null; }
   }
+
+  // 猫薄荷效果
+  if (this.catnipActive) {
+    this.catnipTimer -= dt;
+    var self = this;
+    this.cats.forEach(function(cat) {
+      if (cat.found) return;
+      var dx = (cat.x+cat.w/2) - self.catnipX, dy = (cat.y+cat.h/2) - self.catnipY;
+      if (Math.sqrt(dx*dx+dy*dy) < self.catnipRadius) {
+        if (!cat.wobbleActive) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = catSystem.randRange([0.5, 1.0]); }
+        if (!cat.tailActive) { cat.tailActive = true; cat.tailElapsed = 0; cat.tailDuration = catSystem.randRange([1.0, 2.0]); }
+        if (!cat.bubbleActive) {
+          cat.bubbleActive = true; cat.bubbleElapsed = 0; cat.bubbleDuration = 2.0;
+          cat.bubbleText = ['好香...', '这是什么!', '忍不住了...', '喵~!'][Math.floor(Math.random()*4)];
+        }
+      }
+    });
+    if (this.catnipTimer <= 0) { this.catnipActive = false; this.activeTool = null; }
+  }
+
+  // 震动
+  if (this.shakeTimer > 0) {
+    this.shakeTimer -= dt;
+    this.shakeX = (Math.random()-0.5) * 8;
+    this.shakeY = (Math.random()-0.5) * 8;
+    if (this.shakeTimer <= 0) { this.shakeX = 0; this.shakeY = 0; }
+  }
+
+  // Toast
+  if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast = ''; }
+};
+
+GameEngine.prototype._updateCatBehaviors = function(dt) {
+  this.cats.forEach(function(cat) {
+    if (cat.found) return;
+    var p = cat.personality;
+    // 晃动
+    if (!cat.wobbleActive) {
+      cat.wobbleTimer -= dt;
+      if (cat.wobbleTimer <= 0) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = catSystem.randRange(p.wobbleDuration); }
+    } else {
+      cat.wobbleElapsed += dt;
+      if (cat.wobbleElapsed >= cat.wobbleDuration) { cat.wobbleActive = false; cat.wobbleTimer = catSystem.randRange(p.wobbleCooldown) * cat.behaviorMult; }
+    }
+    // 尾巴
+    if (!cat.tailActive) {
+      cat.tailTimer -= dt;
+      if (cat.tailTimer <= 0) { cat.tailActive = true; cat.tailElapsed = 0; cat.tailDuration = catSystem.randRange(p.tailDuration); }
+    } else {
+      cat.tailElapsed += dt;
+      if (cat.tailElapsed >= cat.tailDuration) { cat.tailActive = false; cat.tailTimer = catSystem.randRange(p.tailCooldown) * cat.behaviorMult; }
+    }
+    // 气泡
+    if (!cat.bubbleActive) {
+      cat.bubbleTimer -= dt;
+      if (cat.bubbleTimer <= 0) {
+        cat.bubbleActive = true; cat.bubbleElapsed = 0;
+        cat.bubbleDuration = catSystem.randRange(p.bubbleDuration);
+        cat.bubbleText = p.bubbleTexts[Math.floor(Math.random() * p.bubbleTexts.length)];
+      }
+    } else {
+      cat.bubbleElapsed += dt;
+      if (cat.bubbleElapsed >= cat.bubbleDuration) { cat.bubbleActive = false; cat.bubbleTimer = catSystem.randRange(p.bubbleCooldown) * cat.behaviorMult; }
+    }
+    // 眼睛偷看
+    if (!cat.eyeActive) {
+      cat.eyeTimer -= dt;
+      if (cat.eyeTimer <= 0) { cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = catSystem.randRange(p.eyeDuration); }
+    } else {
+      cat.eyeElapsed += dt;
+      if (cat.eyeElapsed >= cat.eyeDuration) { cat.eyeActive = false; cat.eyeTimer = catSystem.randRange(p.eyeCooldown) * cat.behaviorMult; }
+    }
+  });
+};
+
+GameEngine.prototype._updateFakeWobbles = function(dt) {
+  for (var i = this.fakeWobbles.length - 1; i >= 0; i--) {
+    this.fakeWobbles[i].elapsed += dt;
+    if (this.fakeWobbles[i].elapsed >= this.fakeWobbles[i].duration) {
+      this.fakeWobbles.splice(i, 1);
+    }
+  }
+  this.fakeWobbleTimer -= dt;
+  if (this.fakeWobbleTimer <= 0) {
+    this.fakeWobbleTimer = 8 + Math.random() * 12;
+    var sneakyCats = this.cats.filter(function(c){ return !c.found && c.personality.fakeWobble; });
+    if (sneakyCats.length > 0) {
+      var sc = sneakyCats[Math.floor(Math.random()*sneakyCats.length)];
+      var nearItems = this.allItems.filter(function(it){
+        if (it.isCat) return false;
+        var dx = (it.x+it.w/2)-(sc.x+sc.w/2), dy = (it.y+it.h/2)-(sc.y+sc.h/2);
+        return Math.sqrt(dx*dx+dy*dy) < 320;
+      });
+      if (nearItems.length > 0) {
+        var target = nearItems[Math.floor(Math.random()*nearItems.length)];
+        this.fakeWobbles.push({ itemId: target.id, elapsed: 0, duration: 0.3 + Math.random()*0.3 });
+      }
+    }
+  }
+};
+
+GameEngine.prototype._getFakeWobble = function(itemId) {
+  for (var i = 0; i < this.fakeWobbles.length; i++) {
+    if (this.fakeWobbles[i].itemId === itemId) return this.fakeWobbles[i];
+  }
+  return null;
+};
+
+GameEngine.prototype._calcStars = function() {
+  if (this.state !== 'win') return 0;
+  if (this.mistakes === 0) return 3;
+  if (this.mistakes === 1) return 2;
+  return 1;
 };
 
 // ========== 渲染 ==========
 
 GameEngine.prototype._render = function() {
-  var ctx = this.ctx;
-  var s = this.scale;
-  var W = this.LOGIC_W;
-  var H = this.LOGIC_H;
-
-  ctx.clearRect(0, 0, this.canvasW * this.dpr, this.canvasH * this.dpr);
+  var ctx = this.ctx, s = this.scale, dpr = this.dpr;
+  ctx.clearRect(0, 0, this.canvasW*dpr, this.canvasH*dpr);
   ctx.save();
-  ctx.scale(s * this.dpr, s * this.dpr);
+  ctx.scale(s*dpr, s*dpr);
+
+  // 开场
+  if (this.state === 'intro') {
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('房间里混入了 ' + this.catCount + ' 只猫咪!', VIEW_W/2, VIEW_H*0.4);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+    ctx.fillText('它们伪装成了各种物品', VIEW_W/2, VIEW_H*0.48);
+    ctx.fillText('仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.53);
+    var cd = Math.ceil(this.introTimer);
+    ctx.font = 'bold 48px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.fillText(cd > 0 ? cd : 'GO!', VIEW_W/2, VIEW_H*0.65);
+    ctx.restore();
+    return;
+  }
+
+  // 震动偏移
+  ctx.translate(this.shakeX, this.shakeY);
 
   // 背景
-  scene.drawBackground(ctx, W, H);
+  ctx.save();
+  scene.drawRoomBackground(ctx, scene.ROOMS[this.currentRoomIdx].bgType);
 
-  // 绘制所有物品
+  // 深度排序
+  this.allItems.sort(function(a, b) { return a.depth - b.depth; });
+
   var self = this;
   this.allItems.forEach(function(item) {
     if (item.isCat && item.catRef.found) {
-      // 已找到的猫：显示猫的形态
       self._drawFoundCat(ctx, item.catRef);
-    } else if (self.wrongItem && self.wrongItem.id === item.id) {
-      // 点错动画
-      self._drawWrongItem(ctx, item);
-    } else {
-      // 正常绘制物品（或猫伪装）
-      item.drawFn(ctx, item.x, item.y, item.w, item.h);
+      return;
+    }
+
+    var offsetX = 0, offsetY = 0;
+    if (item.isCat && item.catRef.wobbleActive) {
+      offsetX = Math.sin(item.catRef.wobbleElapsed * Math.PI * 8) * item.catRef.wobbleStrength;
+    }
+    if (item.isCat && item.catRef.personality.breathe && !item.catRef.found) {
+      offsetY = Math.sin(Date.now() / 800) * 1.2;
+    }
+    if (!item.isCat) {
+      var fw = self._getFakeWobble(item.id);
+      if (fw) { offsetX = Math.sin(fw.elapsed * Math.PI * 8) * 2.5; }
+    }
+
+    var drawBX = item.baseX + offsetX;
+    var drawBY = item.baseY + offsetY;
+    var itemScale = item.scale || ITEM_SCALE;
+
+    // 阴影
+    if (item.zone !== 'wall_decor') {
+      ctx.save();
+      ctx.globalAlpha = 0.10;
+      ctx.fillStyle = '#000';
+      ctx.translate(item.baseX + offsetX, item.baseY + 2);
+      ctx.scale(1, 0.22);
+      ctx.beginPath();
+      ctx.arc(0, 0, item.w * 0.38, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 点错动画
+    if (self.wrongItem && self.wrongItem.id === item.id) {
+      ctx.save();
+      ctx.globalAlpha = 0.5 + Math.sin(self.wrongAnimTimer*20)*0.3;
+      ctx.fillStyle = 'rgba(255,50,50,0.3)';
+      ctx.fillRect(item.x + offsetX - 4, item.y + offsetY - 4, item.w + 8, item.h + 8);
+      ctx.translate(drawBX, drawBY);
+      ctx.scale(itemScale, itemScale);
+      item.drawFn(ctx, -item.origW/2, -item.origH, item.origW, item.origH);
+      ctx.restore();
+      return;
+    }
+
+    // 绘制物品
+    ctx.save();
+    ctx.translate(drawBX, drawBY);
+    ctx.scale(itemScale, itemScale);
+    item.drawFn(ctx, -item.origW/2, -item.origH, item.origW, item.origH);
+    ctx.restore();
+
+    // 猫穿帮效果
+    if (item.isCat) {
+      var catDrawX = item.x + offsetX, catDrawY = item.y + offsetY;
+      self._drawCatTail(ctx, item.catRef, catDrawX, catDrawY);
+      self._drawCatBubble(ctx, item.catRef, catDrawX, catDrawY);
+      self._drawCatEyes(ctx, item.catRef, catDrawX, catDrawY);
     }
   });
 
+  // 激光笔
+  if (this.laserActive) this._drawLaserEffect(ctx);
+  // 猫薄荷
+  if (this.catnipActive) this._drawCatnipEffect(ctx);
+
+  ctx.restore();
+
   // HUD
-  this._drawHUD(ctx, W);
+  this._drawHUD(ctx);
+  // 工具栏
+  this._drawToolbar(ctx);
 
   // Toast
   if (this.toast) {
-    this._drawToast(ctx, W, H);
+    ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var tw = ctx.measureText(this.toast).width;
+    draw.roundRect(ctx, VIEW_W/2-tw/2-15, VIEW_H*0.88-16, tw+30, 32, 12, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle = '#fff'; ctx.fillText(this.toast, VIEW_W/2, VIEW_H*0.88);
   }
 
-  // 结束画面
-  if (this.state === STATE.WIN || this.state === STATE.LOSE) {
-    this._drawEndScreen(ctx, W, H);
+  // 结算
+  if (this.state === 'win' || this.state === 'lose') {
+    this._drawEndScreen(ctx);
   }
 
   ctx.restore();
 };
 
 GameEngine.prototype._drawFoundCat = function(ctx, cat) {
-  var progress = cat.foundAnim;
-  // 缩放弹出动画
-  var scale = progress < 0.5
-    ? 0.5 + progress * 1.5  // 弹出放大
-    : 1.2 - (progress - 0.5) * 0.4;  // 回弹到正常
-  var cx = cat.x + cat.w / 2;
-  var cy = cat.y + cat.h / 2;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(scale, scale);
-  ctx.translate(-cx, -cy);
-  draw.drawCat(ctx, cx, cy, Math.max(cat.w, cat.h) * 0.8, cat.color);
-  ctx.restore();
-
-  // 台词气泡（动画完成后显示）
-  if (progress > 0.6) {
-    var alpha = Math.min(1, (progress - 0.6) / 0.3);
-    ctx.globalAlpha = alpha;
-    var bx = cat.x + cat.w / 2;
-    var by = cat.y - 30;
-    draw.roundRect(ctx, bx - 80, by - 20, 160, 28, 8, 'rgba(0,0,0,0.75)');
-    ctx.font = '11px sans-serif';
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    // 截断过长的台词
-    var txt = cat.quote.length > 14 ? cat.quote.substring(0, 14) + '..' : cat.quote;
-    ctx.fillText(txt, bx, by - 6);
-    ctx.globalAlpha = 1;
+  var p = cat.foundAnim;
+  var cx = cat.x + cat.w/2, cy = cat.y + cat.h/2;
+  if (p < 0.4) {
+    var smokeP = p / 0.4;
+    ctx.save(); ctx.globalAlpha = 1 - smokeP;
+    for (var i = 0; i < 5; i++) {
+      var angle = (i/5)*Math.PI*2 + p*3;
+      var dist = smokeP * 30;
+      ctx.beginPath(); ctx.arc(cx + Math.cos(angle)*dist, cy + Math.sin(angle)*dist, 8+smokeP*10, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill();
+    }
+    ctx.restore();
+  }
+  if (p > 0.3) {
+    var catP = Math.min(1, (p - 0.3) / 0.5);
+    ctx.save();
+    ctx.globalAlpha = catP;
+    var catSize = 40 * catP;
+    draw.drawCat(ctx, cx, cy, catSize, cat.color);
+    if (p > 0.5) {
+      var bubbleAlpha = Math.min(1, (p-0.5)/0.3);
+      ctx.globalAlpha = bubbleAlpha;
+      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      var tw = ctx.measureText(cat.quote).width;
+      draw.roundRect(ctx, cx - tw/2 - 10, cy - catSize - 30, tw + 20, 24, 8, 'rgba(0,0,0,0.75)');
+      ctx.fillStyle = '#ffd700'; ctx.fillText(cat.quote, cx, cy - catSize - 12);
+    }
+    ctx.restore();
   }
 };
 
-GameEngine.prototype._drawWrongItem = function(ctx, item) {
-  // 抖动效果
-  var shakeX = Math.sin(this.wrongAnimTimer * 30) * 4;
+GameEngine.prototype._drawCatTail = function(ctx, cat, dx, dy) {
+  if (!cat.tailActive || cat.found) return;
+  var progress = cat.tailElapsed / cat.tailDuration;
+  var alpha = progress < 0.3 ? progress/0.3 : progress > 0.7 ? (1-progress)/0.3 : 1;
   ctx.save();
-  ctx.translate(shakeX, 0);
-  item.drawFn(ctx, item.x, item.y, item.w, item.h);
-  // 红色闪烁叠加
-  ctx.fillStyle = 'rgba(255, 50, 50, 0.3)';
-  ctx.fillRect(item.x - 3, item.y - 3, item.w + 6, item.h + 6);
+  ctx.globalAlpha = alpha * 0.8;
+  var tx = dx + cat.w + 2;
+  var ty = dy + cat.h * 0.7;
+  var sway = Math.sin(cat.tailElapsed * 5) * 6;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.quadraticCurveTo(tx + 12, ty - 15 + sway, tx + 8, ty - 28 + sway);
+  ctx.strokeStyle = cat.color;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.lineCap = 'butt';
   ctx.restore();
 };
 
-GameEngine.prototype._drawHUD = function(ctx, W) {
-  // 顶部栏背景
-  draw.roundRect(ctx, 10, 10, W - 20, 50, 12, 'rgba(0,0,0,0.5)');
-
-  // 生命值（心）
-  for (var i = 0; i < this.maxLives; i++) {
-    var hx = 25 + i * 35;
-    ctx.font = '22px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(i < this.lives ? '❤️' : '🖤', hx, 40);
-  }
-
-  // 倒计时
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillStyle = this.timer <= 15 ? '#ff6666' : '#fff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(this.timer + 's', W / 2, 36);
-
-  // 猫计数
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = '#ffd700';
-  ctx.textAlign = 'right';
-  ctx.fillText('🐱 ' + this.foundCount + '/' + this.cats.length, W - 25, 36);
+GameEngine.prototype._drawCatBubble = function(ctx, cat, dx, dy) {
+  if (!cat.bubbleActive || cat.found) return;
+  var progress = cat.bubbleElapsed / cat.bubbleDuration;
+  var alpha = progress < 0.2 ? progress/0.2 : progress > 0.75 ? (1-progress)/0.25 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.85;
+  var bx = dx + cat.w * 0.5;
+  var by = dy - 8;
+  by -= Math.sin(cat.bubbleElapsed * 2) * 3;
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  var tw = ctx.measureText(cat.bubbleText).width;
+  draw.roundRect(ctx, bx-tw/2-8, by-20, tw+16, 22, 8, 'rgba(255,255,255,0.9)');
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(bx-4, by+2); ctx.lineTo(bx+4, by+2); ctx.lineTo(bx, by+8); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#333';
+  ctx.fillText(cat.bubbleText, bx, by-2);
+  ctx.restore();
 };
 
-GameEngine.prototype._drawToast = function(ctx, W, H) {
-  var alpha = Math.min(1, this.toastTimer);
-  ctx.globalAlpha = alpha;
-  draw.roundRect(ctx, W / 2 - 100, H * 0.45, 200, 40, 12, 'rgba(0,0,0,0.7)');
-  ctx.font = 'bold 16px sans-serif';
+GameEngine.prototype._drawCatEyes = function(ctx, cat, dx, dy) {
+  if (!cat.eyeActive || cat.found) return;
+  var progress = cat.eyeElapsed / cat.eyeDuration;
+  var alpha = progress < 0.25 ? progress/0.25 : progress > 0.7 ? (1-progress)/0.3 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.7;
+  var ex1 = dx + cat.w * 0.35;
+  var ex2 = dx + cat.w * 0.65;
+  var ey = dy + cat.h - 4;
+  var eyeSize = 3;
+  ctx.fillStyle = cat.color;
+  ctx.beginPath(); ctx.arc(ex1, ey, eyeSize+1.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2, ey, eyeSize+1.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(ex1, ey, eyeSize, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2, ey, eyeSize, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(this.toast, W / 2, H * 0.45 + 20);
-  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(ex1+1, ey-1, 1.2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2+1, ey-1, 1.2, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
 };
 
-GameEngine.prototype._drawEndScreen = function(ctx, W, H) {
-  // 半透明遮罩
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(0, 0, W, H);
+GameEngine.prototype._drawLaserEffect = function(ctx) {
+  var pulse = 0.6 + Math.sin(Date.now()/80) * 0.4;
+  ctx.save();
+  ctx.globalAlpha = 0.3 * pulse;
+  ctx.beginPath(); ctx.arc(this.laserX, this.laserY, 18, 0, Math.PI*2);
+  ctx.fillStyle = '#ff2200'; ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(this.laserX, this.laserY, 4, 0, Math.PI*2);
+  ctx.fillStyle = '#ff3300'; ctx.fill();
+  ctx.beginPath(); ctx.arc(this.laserX, this.laserY, 2, 0, Math.PI*2);
+  ctx.fillStyle = '#ff8866'; ctx.fill();
+  ctx.restore();
+};
 
-  var cy = H * 0.4;
-  draw.roundRect(ctx, W / 2 - 150, cy - 80, 300, 200, 20, 'rgba(30,30,50,0.95)');
+GameEngine.prototype._drawCatnipEffect = function(ctx) {
+  var progress = 1 - this.catnipTimer / 3.0;
+  var alpha = progress < 0.2 ? progress/0.2 * 0.6 : progress > 0.7 ? (1-progress)/0.3 * 0.6 : 0.6;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.arc(this.catnipX, this.catnipY, this.catnipRadius, 0, Math.PI*2);
+  ctx.strokeStyle = '#66dd66'; ctx.lineWidth = 2; ctx.setLineDash([8,4]); ctx.stroke(); ctx.setLineDash([]);
+  var t = Date.now() / 1000;
+  for (var i = 0; i < 6; i++) {
+    var angle = (i/6)*Math.PI*2 + t*0.5;
+    var dist = 8 + Math.sin(t*2+i)*4;
+    var lx = this.catnipX + Math.cos(angle)*dist;
+    var ly = this.catnipY + Math.sin(angle)*dist;
+    ctx.beginPath();
+    ctx.ellipse(lx, ly, 5, 3, angle, 0, Math.PI*2);
+    ctx.fillStyle = '#44cc44'; ctx.fill();
+  }
+  for (var j = 0; j < 8; j++) {
+    var pa = (j/8)*Math.PI*2 + t;
+    var pd = this.catnipRadius * (0.3 + Math.sin(t+j*1.5)*0.2);
+    var px = this.catnipX + Math.cos(pa)*pd;
+    var py = this.catnipY + Math.sin(pa)*pd;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#88ee88'; ctx.fill();
+  }
+  ctx.restore();
+};
 
-  if (this.state === STATE.WIN) {
-    ctx.font = 'bold 28px sans-serif';
-    ctx.fillStyle = '#ffd700';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🎉 全部找到!', W / 2, cy - 40);
+GameEngine.prototype._drawHUD = function(ctx) {
+  draw.roundRect(ctx, 10, 10, VIEW_W-20, 44, 14, 'rgba(0,0,0,0.55)');
+  ctx.font = '18px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  var heartStr = '';
+  for (var i = 0; i < this.maxLives; i++) heartStr += i < this.lives ? '❤️' : '🖤';
+  ctx.fillText(heartStr, 22, 33);
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'right';
+  ctx.fillText('🐱 ' + this.foundCount + ' / ' + this.catCount, VIEW_W-22, 33);
+};
 
-    // 星级评价
-    var stars = this._calcStars();
+GameEngine.prototype._drawToolbar = function(ctx) {
+  if (this.state !== 'playing' && this.state !== 'found_anim' && this.state !== 'wrong_anim') return;
+  var btnSize = 50, pad = 12;
+  var startX = 15, startY = VIEW_H - btnSize - 20;
+  this.toolBtns = [];
+
+  var laserReady = this.laserCooldown <= 0 && !this.laserActive;
+  var laserSelected = this.activeTool === 'laser';
+  this._drawToolBtn(ctx, startX, startY, btnSize, '🔦', '激光笔', laserReady, laserSelected,
+    this.laserCooldown > 0 ? Math.ceil(this.laserCooldown) : 0);
+  this.toolBtns.push({ x:startX, y:startY, w:btnSize, h:btnSize, type:'laser' });
+
+  var catnipReady = this.catnipCooldown <= 0 && !this.catnipActive;
+  var catnipSelected = this.activeTool === 'catnip';
+  var cx2 = startX + btnSize + pad;
+  this._drawToolBtn(ctx, cx2, startY, btnSize, '🌿', '猫薄荷', catnipReady, catnipSelected,
+    this.catnipCooldown > 0 ? Math.ceil(this.catnipCooldown) : 0);
+  this.toolBtns.push({ x:cx2, y:startY, w:btnSize, h:btnSize, type:'catnip' });
+};
+
+GameEngine.prototype._drawToolBtn = function(ctx, x, y, size, icon, label, ready, selected, cd) {
+  ctx.save();
+  var bgColor = selected ? 'rgba(255,215,0,0.4)' : ready ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.4)';
+  draw.roundRect(ctx, x, y, size, size, 12, bgColor);
+  if (selected) {
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+    ctx.strokeRect(x+1, y+1, size-2, size-2);
+  }
+  ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.globalAlpha = ready || selected ? 1 : 0.4;
+  ctx.fillText(icon, x+size/2, y+size/2 - 4);
+  ctx.font = '9px sans-serif'; ctx.fillStyle = '#ccc';
+  ctx.fillText(label, x+size/2, y+size - 7);
+  if (cd > 0) {
+    ctx.globalAlpha = 0.8;
+    ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ff6666';
+    ctx.fillText(cd + 's', x+size/2, y+size/2 - 2);
+  }
+  ctx.restore();
+};
+
+GameEngine.prototype._drawEndScreen = function(ctx) {
+  ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  var room = scene.ROOMS[this.currentRoomIdx];
+  var isWin = this.state === 'win';
+  var stars = this._calcStars();
+
+  ctx.font = 'bold 32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = isWin ? '#ffd700' : '#ff6666';
+  ctx.fillText(isWin ? '全部找到!' : '游戏结束', VIEW_W/2, VIEW_H*0.28);
+
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText(room.emoji + ' ' + room.name, VIEW_W/2, VIEW_H*0.34);
+
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#ddd';
+  ctx.fillText('找到 ' + this.foundCount + ' / ' + this.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.40);
+
+  if (isWin) {
     ctx.font = '36px sans-serif';
     var starStr = '';
-    for (var i = 0; i < 3; i++) {
-      starStr += i < stars ? '⭐' : '☆';
-    }
-    ctx.fillText(starStr, W / 2, cy + 5);
+    for (var i = 0; i < 3; i++) starStr += i < stars ? '⭐' : '☆';
+    ctx.fillText(starStr, VIEW_W/2, VIEW_H*0.48);
 
-    ctx.font = '16px sans-serif';
-    ctx.fillStyle = '#aaa';
-    ctx.fillText('用时 ' + (90 - this.timer) + '秒 | 剩余 ' + this.lives + ' 颗心', W / 2, cy + 45);
-  } else {
-    ctx.font = 'bold 28px sans-serif';
-    ctx.fillStyle = '#ff6666';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('💔 生命耗尽', W / 2, cy - 40);
-
-    ctx.font = '16px sans-serif';
-    ctx.fillStyle = '#aaa';
-    ctx.fillText('找到了 ' + this.foundCount + '/' + this.cats.length + ' 只猫', W / 2, cy + 10);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#bbb';
+    var desc = stars === 3 ? '完美! 零失误!' : stars === 2 ? '很棒! 只错了1次' : '过关了! 但要更仔细哦';
+    ctx.fillText(desc, VIEW_W/2, VIEW_H*0.54);
   }
 
-  // 再来一局按钮
-  draw.roundRect(ctx, W / 2 - 80, cy + 70, 160, 42, 20, '#ffd700');
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillStyle = '#1a1a2e';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('再来一局', W / 2, cy + 91);
+  // 重玩按钮
+  var btnY1 = VIEW_H * 0.60, btnW = 160, btnH = 42;
+  draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY1, btnW, btnH, 22, '#ffd700');
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#1a1a2e';
+  ctx.fillText('再来一局', VIEW_W/2, btnY1 + btnH/2);
+  this.retryBtn = { x: VIEW_W/2-btnW/2, y: btnY1, w: btnW, h: btnH };
 
-  // 记录按钮区域用于点击检测
-  this._retryBtnArea = {
-    x: W / 2 - 80, y: cy + 70, w: 160, h: 42
-  };
+  // 下一关
+  if (isWin && this.currentRoomIdx < scene.ROOMS.length - 1) {
+    var btnY2 = VIEW_H * 0.69;
+    var nextRoom = scene.ROOMS[this.currentRoomIdx + 1];
+    draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY2, btnW, btnH, 22, '#66bbff');
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillText('下一关: ' + nextRoom.name, VIEW_W/2, btnY2 + btnH/2);
+    this.nextLevelBtn = { x: VIEW_W/2-btnW/2, y: btnY2, w: btnW, h: btnH };
+  } else {
+    this.nextLevelBtn = null;
+  }
+
+  // 选关
+  var btnY3 = isWin && this.currentRoomIdx < scene.ROOMS.length - 1 ? VIEW_H * 0.78 : VIEW_H * 0.69;
+  draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY3, btnW, btnH, 22, 'rgba(255,255,255,0.15)');
+  ctx.fillStyle = '#ddd';
+  ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
+  this.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
 };
 
-GameEngine.prototype._calcStars = function() {
-  var timeUsed = 90 - this.timer;
-  if (this.lives === 3 && timeUsed <= 30) return 3;
-  if (this.lives >= 2 && timeUsed <= 60) return 2;
-  return 1;
+// ========== 触控处理 ==========
+
+GameEngine.prototype.handleTouchStart = function(x, y) {
+  var vx = x / this.scale;
+  var vy = y / this.scale;
+  this._touchStartX = vx;
+  this._touchStartY = vy;
+  this._touchStartTime = Date.now();
+  this._isDragging = false;
 };
 
-// ========== 触摸事件 ==========
+GameEngine.prototype.handleTouchMove = function(x, y) {
+  var vx = x / this.scale;
+  var vy = y / this.scale;
+  var dx = vx - this._touchStartX;
+  var dy = vy - this._touchStartY;
+  if (Math.abs(dx) > 5 || Math.abs(dy) > 5) this._isDragging = true;
+};
 
-GameEngine.prototype.handleTap = function(touchX, touchY) {
-  // 转换为逻辑坐标
-  var lx = touchX / this.scale;
-  var ly = touchY / this.scale;
+GameEngine.prototype.handleTouchEnd = function(x, y) {
+  if (this._isDragging) return;
+  var elapsed = Date.now() - this._touchStartTime;
+  if (elapsed > 500) return;
+  var vx = x / this.scale;
+  var vy = y / this.scale;
+  this._handleTap(vx, vy);
+};
 
-  // 结束状态 —— 检查"再来一局"按钮
-  if (this.state === STATE.WIN || this.state === STATE.LOSE) {
-    if (this._retryBtnArea) {
-      var btn = this._retryBtnArea;
-      if (lx >= btn.x && lx <= btn.x + btn.w && ly >= btn.y && ly <= btn.y + btn.h) {
-        this.startGame();
+GameEngine.prototype._handleTap = function(vx, vy) {
+  // 结算画面按钮
+  if (this.state === 'win' || this.state === 'lose') {
+    if (this.retryBtn) {
+      var b = this.retryBtn;
+      if (vx >= b.x && vx <= b.x+b.w && vy >= b.y && vy <= b.y+b.h) {
+        this.startGame(); return;
+      }
+    }
+    if (this.nextLevelBtn) {
+      var nb = this.nextLevelBtn;
+      if (vx >= nb.x && vx <= nb.x+nb.w && vy >= nb.y && vy <= nb.y+nb.h) {
+        this.startGame(this.currentRoomIdx + 1); return;
+      }
+    }
+    if (this.selectBtn) {
+      var sb = this.selectBtn;
+      if (vx >= sb.x && vx <= sb.x+sb.w && vy >= sb.y && vy <= sb.y+sb.h) {
+        this.stop();
+        if (this.onShowLevelSelect) this.onShowLevelSelect();
+        return;
       }
     }
     return;
   }
 
-  // 非游戏中状态不响应
-  if (this.state !== STATE.PLAYING) return;
+  if (this.state !== 'playing') return;
 
-  // 检测点击了哪个物品
-  var hitItem = null;
-  // 从后往前遍历（后绘制的在上面）
-  for (var i = this.allItems.length - 1; i >= 0; i--) {
-    var item = this.allItems[i];
-    // 跳过已找到的猫
-    if (item.isCat && item.catRef.found) continue;
-    // 碰撞检测（加一点容差）
-    var pad = 5;
-    if (lx >= item.x - pad && lx <= item.x + item.w + pad &&
-        ly >= item.y - pad && ly <= item.y + item.h + pad) {
-      hitItem = item;
-      break;
+  // 工具栏
+  for (var t = 0; t < this.toolBtns.length; t++) {
+    var tb = this.toolBtns[t];
+    if (vx >= tb.x && vx <= tb.x+tb.w && vy >= tb.y && vy <= tb.y+tb.h) {
+      this._handleToolBtnClick(tb.type);
+      return;
     }
   }
 
-  if (!hitItem) return;
+  // 激光笔使用
+  if (this.activeTool === 'laser' && this.laserCooldown <= 0) {
+    this.laserActive = true;
+    this.laserX = vx; this.laserY = vy;
+    this.laserTargetX = vx; this.laserTargetY = vy;
+    this.laserTimer = 2.5;
+    this.laserCooldown = this.laserMaxCD;
+    this.activeTool = null;
+    this.toast = '激光笔启动! 观察猫的反应...'; this.toastTimer = 1.5;
+    return;
+  }
 
-  if (hitItem.isCat) {
-    // 找到猫了！
-    var cat = hitItem.catRef;
-    cat.found = true;
-    cat.foundAnim = 0;
+  // 检测点击物品
+  var hit = null;
+  for (var i = this.allItems.length - 1; i >= 0; i--) {
+    var item = this.allItems[i];
+    if (item.isCat && item.catRef.found) continue;
+    if (vx >= item.x && vx <= item.x + item.w && vy >= item.y && vy <= item.y + item.h) {
+      hit = item; break;
+    }
+  }
+
+  if (!hit) return;
+
+  if (hit.isCat) {
+    hit.catRef.found = true;
+    hit.catRef.foundAnim = 0;
     this.foundCount++;
-    this.score += 100 + this.timer; // 剩余时间越多分越高
-    this.currentFoundCat = cat;
-    this.animTimer = 1.2;
-    this.state = STATE.FOUND_ANIM;
-    this.toast = '找到了! 🐱';
-    this.toastTimer = 1;
+    this.currentFoundCat = hit.catRef;
+    this.animTimer = 1.5;
+    this.state = 'found_anim';
+    this.toast = '找到了【' + hit.catRef.personality.name + '】! ' + hit.catRef.quote;
+    this.toastTimer = 2.5;
   } else {
-    // 点错了
     this.lives--;
-    this.wrongItem = hitItem;
-    this.wrongAnimTimer = 0.5;
-    this.state = STATE.WRONG_ANIM;
-    this.toast = '这不是猫! ❌';
-    this.toastTimer = 0.8;
+    this.mistakes++;
+    this.wrongItem = hit;
+    this.wrongAnimTimer = 0.6;
+    this.shakeTimer = 0.3;
+    this.state = 'wrong_anim';
+    this.toast = '这不是猫咪! -1 ❤️';
+    this.toastTimer = 1.0;
   }
 };
 
-GameEngine.prototype._onEnd = function() {
-  if (this.onGameEnd) {
-    this.onGameEnd({
-      win: this.state === STATE.WIN,
-      score: this.score,
-      stars: this._calcStars(),
-      timeUsed: 90 - this.timer,
-      lives: this.lives,
-      foundCount: this.foundCount,
-      totalCats: this.cats.length,
-      cats: this.cats,
-    });
+GameEngine.prototype._handleToolBtnClick = function(type) {
+  if (type === 'laser') {
+    if (this.laserCooldown > 0 || this.laserActive) {
+      this.toast = '激光笔冷却中...'; this.toastTimer = 0.8;
+      return;
+    }
+    if (this.activeTool === 'laser') {
+      this.activeTool = null;
+    } else {
+      this.activeTool = 'laser';
+      this.toast = '点击房间中任意位置使用激光笔'; this.toastTimer = 1.5;
+    }
+  } else if (type === 'catnip') {
+    if (this.catnipCooldown > 0 || this.catnipActive) {
+      this.toast = '猫薄荷冷却中...'; this.toastTimer = 0.8;
+      return;
+    }
+    this.catnipActive = true;
+    this.catnipX = VIEW_W / 2;
+    this.catnipY = (scene.BACK_B + scene.FLOOR_B) / 2;
+    this.catnipTimer = 3.0;
+    this.catnipCooldown = this.catnipMaxCD;
+    this.activeTool = null;
+    this.toast = '猫薄荷散发香气... 观察附近的物品!'; this.toastTimer = 2.0;
   }
 };
 

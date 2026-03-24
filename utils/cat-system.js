@@ -1,171 +1,184 @@
 /**
- * 猫系统（阶段1：基础版）
- * - 随机选择物品位置伪装
- * - 混合模式：部分"替换"原有物品，部分"多出"新物品
- * - 被找到时显示猫 + 台词
+ * 猫系统 —— 性格、语录、放置逻辑
+ * 同步自 preview.html
  */
 var scene = require('./scene');
 
-// 搞笑台词库
 var QUOTES = [
-  '我在这个花瓶里住了3天了...',
-  '你怎么发现我的！不可能！',
-  '这个沙发真的很舒服...',
-  '再给我5分钟好不好...',
-  '我变成拖鞋的时候脚好臭...',
-  '你是不是开挂了？',
-  '我明明变得很像的！',
-  '哼，下次我藏得更好！',
-  '被你找到了，好丢猫的脸...',
-  '我还以为我已经融入环境了',
-  '说好的猫生自由呢？',
-  '你盯着我看好久了对不对',
-  '我已经是一个成熟的杯子了',
-  '别碰我！我是一本正经的书！',
-  '猫猫我啊，最讨厌被找到了',
-  '你能假装没看见我吗...',
-  '我只是在这里午睡而已！',
-  '又被抓了，今天第几次了？',
-  '我的伪装术还需要修炼...',
-  '喵呜... 我认输了...',
+  '你怎么发现我的！不可能！', '再给我5分钟好不好...',
+  '我变成拖鞋的时候脚好臭...', '你是不是开挂了？',
+  '我明明变得很像的！', '哼，下次我藏得更好！',
+  '被你找到了，好丢猫的脸...', '我还以为我已经融入环境了',
+  '说好的猫生自由呢？', '你盯着我看好久了对不对',
+  '别碰我！我是一本正经的书！', '猫猫我啊，最讨厌被找到了',
+  '你能假装没看见我吗...', '又被抓了，今天第几次了？',
+  '喵呜... 我认输了...', '我只是在这里午睡而已！',
 ];
 
-/**
- * 生成一局游戏的猫数据
- * @param {number} catCount 猫的数量
- * @returns {object} { cats: [...], allItems: [...] }
- *   cats: 每只猫的数据 { id, type, x, y, w, h, drawFn, quote, color, found }
- *   allItems: 包含原有物品和猫伪装物品的完整列表（用于渲染）
- */
-function generateCats(catCount) {
-  catCount = catCount || 4;
-
-  // 决定多少只猫用"替换"模式，多少用"多出"模式
-  var replaceCount = Math.ceil(catCount / 2);  // 一半替换
-  var extraCount = catCount - replaceCount;     // 一半多出
-
-  var cats = [];
-  var usedQuotes = [];
-  var usedItemIds = [];
-  var usedSlots = [];
-
-  // 可被替换的物品（排除地毯等大件和不适合替换的）
-  var replaceableItems = scene.ITEMS.filter(function(item) {
-    return ['rug', 'sofa', 'tv', 'table'].indexOf(item.id) === -1;
-  });
-
-  // 随机打乱
-  replaceableItems = shuffle(replaceableItems);
-
-  // 生成"替换"类型的猫
-  for (var i = 0; i < replaceCount && i < replaceableItems.length; i++) {
-    var item = replaceableItems[i];
-    usedItemIds.push(item.id);
-    cats.push({
-      id: 'cat_replace_' + i,
-      type: 'replace',
-      originalItemId: item.id,
-      x: item.x,
-      y: item.y,
-      w: item.w,
-      h: item.h,
-      drawFn: createReplaceDraw(item),
-      quote: pickQuote(usedQuotes),
-      color: scene.CAT_COLORS[i % scene.CAT_COLORS.length],
-      found: false,
-      foundAnim: 0,
-    });
-  }
-
-  // 生成"多出"类型的猫
-  var availableSlots = shuffle(scene.EMPTY_SLOTS.slice());
-  var templates = shuffle(scene.EXTRA_ITEM_TEMPLATES.slice());
-
-  for (var j = 0; j < extraCount && j < availableSlots.length; j++) {
-    var slot = availableSlots[j];
-    var tmpl = templates[j % templates.length];
-    usedSlots.push(slot);
-    cats.push({
-      id: 'cat_extra_' + j,
-      type: 'extra',
-      x: slot.x,
-      y: slot.y,
-      w: tmpl.w,
-      h: tmpl.h,
-      drawFn: tmpl.draw,
-      quote: pickQuote(usedQuotes),
-      color: scene.CAT_COLORS[(replaceCount + j) % scene.CAT_COLORS.length],
-      found: false,
-      foundAnim: 0,
-    });
-  }
-
-  // 构建完整物品列表（原有物品去掉被替换的 + 猫伪装物品）
-  var allItems = [];
-
-  // 添加未被替换的原有物品
-  scene.ITEMS.forEach(function(item) {
-    if (usedItemIds.indexOf(item.id) === -1) {
-      allItems.push({
-        id: item.id,
-        name: item.name,
-        x: item.x, y: item.y, w: item.w, h: item.h,
-        drawFn: item.draw,
-        isCat: false,
-      });
-    }
-  });
-
-  // 添加猫（伪装成物品）
-  cats.forEach(function(cat) {
-    allItems.push({
-      id: cat.id,
-      name: '猫',
-      x: cat.x, y: cat.y, w: cat.w, h: cat.h,
-      drawFn: cat.drawFn,
-      isCat: true,
-      catRef: cat,
-    });
-  });
-
-  return { cats: cats, allItems: allItems, replacedIds: usedItemIds };
-}
-
-/**
- * 创建"替换"物品的绘制函数（和原物品相似但有微小差异）
- */
-function createReplaceDraw(originalItem) {
-  return function(ctx, x, y, w, h) {
-    // 先画原物品
-    originalItem.draw(ctx, x, y, w, h);
-    // 微小差异：稍微偏移或颜色偏差（通过叠加半透明色）
-    ctx.fillStyle = 'rgba(255, 200, 100, 0.06)';
-    ctx.fillRect(x, y, w, h);
-  };
-}
-
-function pickQuote(usedList) {
-  var available = QUOTES.filter(function(q) {
-    return usedList.indexOf(q) === -1;
-  });
-  if (available.length === 0) available = QUOTES;
-  var q = available[Math.floor(Math.random() * available.length)];
-  usedList.push(q);
-  return q;
-}
+var CAT_PERSONALITIES = [
+  {
+    id: 'active', name: '好动猫', desc: '坐不住，频繁穿帮',
+    wobbleCooldown: [2, 4], wobbleDuration: [0.5, 0.8], wobbleStrength: 4,
+    tailCooldown: [4, 8], tailDuration: [1.2, 2.0],
+    bubbleCooldown: [5, 10], bubbleDuration: [1.5, 2.5],
+    bubbleTexts: ['喵~', '喵呜!', '好无聊~', '嘿嘿'],
+    eyeCooldown: [6, 12], eyeDuration: [0.8, 1.5],
+    breathe: true, color: '#ff9944',
+  },
+  {
+    id: 'quiet', name: '安静猫', desc: '很少动，耐心观察才能发现',
+    wobbleCooldown: [8, 15], wobbleDuration: [0.2, 0.4], wobbleStrength: 2,
+    tailCooldown: [12, 22], tailDuration: [0.6, 1.0],
+    bubbleCooldown: [15, 25], bubbleDuration: [1.0, 1.5],
+    bubbleTexts: ['zzZ', '...', '💤'],
+    eyeCooldown: [10, 18], eyeDuration: [0.5, 0.8],
+    breathe: true, color: '#aaaaaa',
+  },
+  {
+    id: 'sneaky', name: '狡猾猫', desc: '穿帮很少，但会制造假线索',
+    wobbleCooldown: [6, 12], wobbleDuration: [0.3, 0.5], wobbleStrength: 2.5,
+    tailCooldown: [10, 18], tailDuration: [0.5, 0.8],
+    bubbleCooldown: [12, 20], bubbleDuration: [1.0, 1.5],
+    bubbleTexts: ['...嘻嘻', '🤫'],
+    eyeCooldown: [8, 14], eyeDuration: [0.4, 0.7],
+    breathe: false, color: '#886644',
+    fakeWobble: true,
+  },
+  {
+    id: 'tsundere', name: '傲娇猫', desc: '忍不住嘲讽你，话很多',
+    wobbleCooldown: [4, 8], wobbleDuration: [0.3, 0.6], wobbleStrength: 3,
+    tailCooldown: [6, 12], tailDuration: [1.0, 1.8],
+    bubbleCooldown: [4, 8], bubbleDuration: [2.0, 3.0],
+    bubbleTexts: ['你找不到我的~', '笨蛋!', '哼!', '看这边啦~', '我才不会动呢', '无聊...'],
+    eyeCooldown: [5, 10], eyeDuration: [0.8, 1.2],
+    breathe: true, color: '#ffcc66',
+  },
+];
 
 function shuffle(arr) {
   var a = arr.slice();
-  for (var i = a.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var tmp = a[i];
-    a[i] = a[j];
-    a[j] = tmp;
+  for (var i = a.length-1; i > 0; i--) {
+    var j = Math.floor(Math.random()*(i+1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
   }
   return a;
 }
 
+function randRange(arr) {
+  return arr[0] + Math.random() * (arr[1] - arr[0]);
+}
+
+function pickQuote(used) {
+  var avail = QUOTES.filter(function(q){ return used.indexOf(q)===-1; });
+  if (!avail.length) avail = QUOTES;
+  var q = avail[Math.floor(Math.random()*avail.length)];
+  used.push(q);
+  return q;
+}
+
+// 重叠检测
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
+}
+
+function hasOverlap(ix, iy, sw, sh, placed) {
+  for (var j = 0; j < placed.length; j++) {
+    var p = placed[j];
+    if (rectsOverlap(ix, iy, sw, sh, p.x, p.y, p.w, p.h)) return true;
+  }
+  return false;
+}
+
+/**
+ * 放置物品
+ * @param {Array} templates - 物品模板数组
+ * @param {Array} existing - 已放置物品（用于重叠检测）
+ * @param {string} roomId - 房间ID
+ * @returns {Array} 已放置的物品数组
+ */
+function placeItems(templates, existing, roomId) {
+  var placed = existing ? existing.slice() : [];
+  var result = [];
+  var layout = scene.ROOM_LAYOUTS[roomId] || {};
+  var extras = scene.ROOM_LAYOUTS[roomId + '_extra'] || [];
+
+  for (var i = 0; i < templates.length; i++) {
+    var tmpl = templates[i];
+    var candidates = [];
+
+    // 1. 固定布局位置
+    var pos = layout[tmpl.id];
+    if (pos) {
+      candidates.push({
+        bx: pos.x + (Math.random() - 0.5) * 12,
+        by: pos.y + (Math.random() - 0.5) * 8,
+        dp: pos.depth || pos.y
+      });
+    }
+
+    // 2. 备用位置（打乱）
+    var shuffledExtras = shuffle(extras);
+    for (var ei = 0; ei < shuffledExtras.length; ei++) {
+      candidates.push({
+        bx: shuffledExtras[ei].x + (Math.random() - 0.5) * 20,
+        by: shuffledExtras[ei].y + (Math.random() - 0.5) * 15,
+        dp: shuffledExtras[ei].y
+      });
+    }
+
+    // 3. 随机后备
+    for (var ri = 0; ri < 8; ri++) {
+      var rbx = 100 + Math.random() * 550;
+      var rby = scene.BACK_B + 60 + Math.random() * 240;
+      candidates.push({ bx: rbx, by: rby, dp: rby });
+    }
+
+    // 逐个尝试，选第一个不重叠的
+    var chosen = null;
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var c = candidates[ci];
+      var scale = (tmpl.zone === 'wall_decor') ? scene.ITEM_SCALE : scene.getItemScale(c.by);
+      var sw = tmpl.w * scale;
+      var sh = tmpl.h * scale;
+      var ix = c.bx - sw / 2;
+      var iy = c.by - sh;
+      ix = Math.max(4, Math.min(scene.VIEW_W - sw - 4, ix));
+      iy = Math.max(4, Math.min(scene.VIEW_H - sh - 4, iy));
+
+      if (!hasOverlap(ix, iy, sw, sh, placed)) {
+        chosen = { ix:ix, iy:iy, bx:ix+sw/2, by:iy+sh, sw:sw, sh:sh, dp:c.dp, scale:scale };
+        break;
+      }
+    }
+
+    // 兜底
+    if (!chosen) {
+      var c = candidates[0];
+      var scale = (tmpl.zone === 'wall_decor') ? scene.ITEM_SCALE : scene.getItemScale(c.by);
+      var sw = tmpl.w * scale;
+      var sh = tmpl.h * scale;
+      var ix = Math.max(4, Math.min(scene.VIEW_W - sw - 4, c.bx - sw/2));
+      var iy = Math.max(4, Math.min(scene.VIEW_H - sh - 4, c.by - sh));
+      chosen = { ix:ix, iy:iy, bx:ix+sw/2, by:iy+sh, sw:sw, sh:sh, dp:c.dp, scale:scale };
+    }
+
+    var item = {
+      id:tmpl.id, name:tmpl.name, zone:tmpl.zone, draw:tmpl.draw,
+      origW:tmpl.w, origH:tmpl.h, scale:chosen.scale,
+      x:chosen.ix, y:chosen.iy, w:chosen.sw, h:chosen.sh,
+      baseX:chosen.bx, baseY:chosen.by, depth:chosen.dp
+    };
+    placed.push(item);
+    result.push(item);
+  }
+  return result;
+}
+
 module.exports = {
-  generateCats: generateCats,
   QUOTES: QUOTES,
+  CAT_PERSONALITIES: CAT_PERSONALITIES,
+  shuffle: shuffle,
+  randRange: randRange,
+  pickQuote: pickQuote,
+  placeItems: placeItems,
 };

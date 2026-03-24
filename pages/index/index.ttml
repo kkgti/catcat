@@ -11,7 +11,30 @@
     <text class="info-text">小心！点错会扣一颗心 ❤️</text>
   </view>
 
-  <view class="start-btn" bindtap="onStartGame">
-    <text class="start-text">开始游戏</text>
+  <view class="level-list">
+    <view
+      class="level-card {{item.unlocked ? '' : 'locked'}}"
+      tt:for="{{rooms}}"
+      tt:key="idx"
+      data-idx="{{item.idx}}"
+      bindtap="onSelectRoom"
+    >
+      <view class="level-emoji">
+        <text>{{item.unlocked ? item.emoji : '🔒'}}</text>
+      </view>
+      <view class="level-info">
+        <text class="level-name">{{item.name}}</text>
+        <text class="level-desc">{{item.desc}}</text>
+        <view class="level-meta">
+          <text class="meta-text">猫x{{item.catCount}}</text>
+          <text class="meta-text">❤️x{{item.lives}}</text>
+        </view>
+      </view>
+      <view class="level-stars" tt:if="{{item.unlocked}}">
+        <text class="star">{{item.stars >= 1 ? '⭐' : '☆'}}</text>
+        <text class="star">{{item.stars >= 2 ? '⭐' : '☆'}}</text>
+        <text class="star">{{item.stars >= 3 ? '⭐' : '☆'}}</text>
+      </view>
+    </view>
   </view>
 </view>

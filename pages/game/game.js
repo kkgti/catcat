@@ -3,6 +3,11 @@ var GameEngine = require('../../utils/game-engine');
 Page({
   data: {},
 
+  onLoad: function(options) {
+    // 从 URL 参数获取关卡索引，默认第一关
+    this.roomIdx = parseInt(options.roomIdx) || 0;
+  },
+
   onReady: function() {
     this.engine = new GameEngine();
     this._initCanvas();
@@ -40,18 +45,39 @@ Page({
           : null;
 
         self.engine.init(ctx, width, height, dpr);
+
+        // 返回关卡选择回调
+        self.engine.onShowLevelSelect = function() {
+          tt.navigateBack();
+        };
+
+        // 游戏结束回调
         self.engine.onGameEnd = function(result) {
           console.log('游戏结束', result);
         };
-        self.engine.startGame();
+
+        // 启动指定关卡
+        self.engine.startGame(self.roomIdx);
       });
   },
 
   onTouchStart: function(e) {
     if (!this.engine) return;
     var touch = e.touches[0];
-    // 抖音小程序 touch 坐标就是相对 Canvas 的坐标
-    this.engine.handleTap(touch.x, touch.y);
+    this.engine.handleTouchStart(touch.x, touch.y);
+  },
+
+  onTouchMove: function(e) {
+    if (!this.engine) return;
+    var touch = e.touches[0];
+    this.engine.handleTouchMove(touch.x, touch.y);
+  },
+
+  onTouchEnd: function(e) {
+    if (!this.engine) return;
+    // touchend 时 touches 为空，用 changedTouches
+    var touch = e.changedTouches[0];
+    this.engine.handleTouchEnd(touch.x, touch.y);
   },
 
   onUnload: function() {
