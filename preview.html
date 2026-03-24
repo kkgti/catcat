@@ -181,8 +181,16 @@ var ITEM_TEMPLATES = [
     id:'tv', name:'电视', w:180, h:120, zone:'wall',
     draw:function(ctx,x,y,w,h){
       DrawUtils.roundRect(ctx,x,y,w,h,8,'#222');
-      DrawUtils.roundRect(ctx,x+8,y+8,w-16,h-30,4,'#334455');
-      ctx.fillStyle='rgba(100,150,200,0.1)'; ctx.fillRect(x+12,y+12,(w-24)*0.6,(h-38)*0.4);
+      // 屏幕微闪烁（像在播放节目）
+      var flk=Date.now()/1000;
+      var br=Math.floor(51+Math.sin(flk*2.1)*8);
+      var bg=Math.floor(68+Math.sin(flk*1.7)*6);
+      var bb=Math.floor(85+Math.sin(flk*3.3)*5);
+      DrawUtils.roundRect(ctx,x+8,y+8,w-16,h-30,4,'rgb('+br+','+bg+','+bb+')');
+      // 屏幕高光流动
+      var hlx=((flk*0.3)%1.0)*(w-24);
+      ctx.fillStyle='rgba(150,200,255,'+(0.06+Math.sin(flk*1.5)*0.03)+')';
+      ctx.fillRect(x+12,y+12,hlx,(h-38)*0.4);
       DrawUtils.roundRect(ctx,x+65,y+h-18,50,16,3,'#333');
     }
   },
@@ -249,8 +257,18 @@ var ITEM_TEMPLATES = [
       for(var i=0;i<12;i++){var a=(i/12)*Math.PI*2-Math.PI/2;
         ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(r-6),cy+Math.sin(a)*(r-6));
         ctx.lineTo(cx+Math.cos(a)*(r-2),cy+Math.sin(a)*(r-2)); ctx.strokeStyle='#333'; ctx.lineWidth=1.5; ctx.stroke();}
-      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+10,cy-8); ctx.strokeStyle='#333'; ctx.lineWidth=2.5; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx-4,cy-15); ctx.strokeStyle='#555'; ctx.lineWidth=1.5; ctx.stroke();
+      // 动态指针（跟随真实时间）
+      var now=Date.now()/1000;
+      var secA=(now%60)/60*Math.PI*2-Math.PI/2;
+      var minA=((now/60)%60)/60*Math.PI*2-Math.PI/2;
+      var hrA=((now/3600)%12)/12*Math.PI*2-Math.PI/2;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(hrA)*(r*0.4),cy+Math.sin(hrA)*(r*0.4));
+      ctx.strokeStyle='#333'; ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(minA)*(r*0.6),cy+Math.sin(minA)*(r*0.6));
+      ctx.strokeStyle='#555'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(secA)*(r*0.7),cy+Math.sin(secA)*(r*0.7));
+      ctx.strokeStyle='#cc3333'; ctx.lineWidth=0.8; ctx.stroke(); ctx.lineCap='butt';
+      ctx.beginPath(); ctx.arc(cx,cy,2,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
     }
   },
   {
@@ -378,11 +396,19 @@ var ITEM_TEMPLATES = [
       ctx.beginPath(); ctx.arc(x+w/2,y+h*0.45,w*0.45,0,Math.PI*2); ctx.strokeStyle='rgba(150,220,255,0.5)'; ctx.lineWidth=2; ctx.stroke();
       // 水面
       ctx.fillStyle='rgba(80,180,240,0.2)'; ctx.fillRect(x+w*0.1,y+h*0.25,w*0.8,h*0.45);
-      // 鱼
-      ctx.beginPath(); ctx.ellipse(x+w*0.4,y+h*0.45,6,4,0,0,Math.PI*2); ctx.fillStyle='#ff6633'; ctx.fill();
-      ctx.beginPath(); ctx.moveTo(x+w*0.4-6,y+h*0.45); ctx.lineTo(x+w*0.4-12,y+h*0.45-5); ctx.lineTo(x+w*0.4-12,y+h*0.45+5); ctx.closePath(); ctx.fill();
-      // 水草
-      ctx.beginPath(); ctx.moveTo(x+w*0.65,y+h*0.7); ctx.quadraticCurveTo(x+w*0.6,y+h*0.5,x+w*0.68,y+h*0.35);
+      // 游动的鱼
+      var ft=Date.now()/1500;
+      var fx=x+w*0.5+Math.sin(ft)*w*0.15;
+      var fy=y+h*0.45+Math.sin(ft*1.7)*3;
+      var faceL=Math.cos(ft)<0;
+      ctx.save(); ctx.translate(fx,fy); if(faceL)ctx.scale(-1,1);
+      ctx.beginPath(); ctx.ellipse(0,0,6,4,0,0,Math.PI*2); ctx.fillStyle='#ff6633'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(-11,-4); ctx.lineTo(-11,4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // 摇曳的水草
+      var sway=Math.sin(Date.now()/900)*3;
+      ctx.beginPath(); ctx.moveTo(x+w*0.65,y+h*0.7);
+      ctx.quadraticCurveTo(x+w*0.6+sway,y+h*0.5,x+w*0.68+sway*0.5,y+h*0.35);
       ctx.strokeStyle='#44aa44'; ctx.lineWidth=2; ctx.stroke();
     }
   },
@@ -1533,6 +1559,31 @@ function drawWindow(ctx, lPct, rPct, tPct, bPct, skyColor, isNight) {
   // 天空
   ctx.fillStyle = skyColor;
   ctx.fillRect(wL, wT, wW, wH);
+  // 飘动的云朵（裁剪到窗口内）
+  ctx.save();
+  ctx.beginPath(); ctx.rect(wL, wT, wW, wH); ctx.clip();
+  if (!isNight) {
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    var ct1 = ((Date.now() / 18000) % 1.4) - 0.2;
+    var cx1 = wL + ct1 * wW, cy1 = wT + wH * 0.25;
+    ctx.beginPath(); ctx.arc(cx1,cy1,7,0,Math.PI*2); ctx.arc(cx1+9,cy1-3,5,0,Math.PI*2); ctx.arc(cx1+16,cy1,6,0,Math.PI*2); ctx.fill();
+    var ct2 = ((Date.now() / 25000 + 0.5) % 1.4) - 0.2;
+    var cx2 = wL + ct2 * wW, cy2 = wT + wH * 0.55;
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.arc(cx2,cy2,5,0,Math.PI*2); ctx.arc(cx2+8,cy2-2,4,0,Math.PI*2); ctx.fill();
+  } else {
+    // 夜空闪烁的星星
+    ctx.fillStyle = 'rgba(255,255,220,0.4)';
+    for (var si=0; si<5; si++) {
+      var starX = wL + ((si*137+50) % wW);
+      var starY = wT + ((si*89+20) % wH);
+      var twinkle = 0.2 + Math.sin(Date.now()/600 + si*2) * 0.3;
+      ctx.globalAlpha = twinkle;
+      ctx.beginPath(); ctx.arc(starX, starY, 1.2, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
   // 玻璃光泽
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(wL, wT, wW * 0.4, wH);
@@ -1649,8 +1700,9 @@ function drawLivingroomBg(ctx) {
   ctx.fillStyle = 'rgba(0,0,0,0.03)';
   var wainY = BACK_T + (BACK_B - BACK_T) * 0.55;
   ctx.fillRect(BACK_L, wainY, BACK_R - BACK_L, BACK_B - wainY - 12);
-  // 台灯暖光晕
-  drawWarmGlow(ctx, 110, 510, 130, 'rgba(255,200,100,0.06)');
+  // 台灯暖光晕（微微脉动呼吸感）
+  var glowPulse = 1.0 + Math.sin(Date.now() / 2000) * 0.08;
+  drawWarmGlow(ctx, 140, 510, 130 * glowPulse, 'rgba(255,200,100,0.06)');
 }
 
 function drawKitchenBg(ctx) {
@@ -1699,8 +1751,9 @@ function drawBedroomBg(ctx) {
 
   drawBaseboard(ctx, '#5a5040');
   drawCeilingLight(ctx);
-  // 床头灯暖光
-  drawWarmGlow(ctx, 120, 530, 110, 'rgba(255,190,100,0.06)');
+  // 床头灯暖光（微微脉动）
+  var glowPulse2 = 1.0 + Math.sin(Date.now() / 2500) * 0.06;
+  drawWarmGlow(ctx, 140, 530, 110 * glowPulse2, 'rgba(255,190,100,0.06)');
 }
 
 function drawCatTail(ctx, cat, dx, dy) {
