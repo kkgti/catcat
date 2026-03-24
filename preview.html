@@ -1153,6 +1153,15 @@ var game = {
   catnipRadius: 200,   // 猫薄荷影响范围
   toolBtns: [],        // 工具按钮位置 [{x,y,w,h,type}]
   rafId: null,
+  // 计时器
+  playTime: 0,
+  // 提示系统
+  hintTimer: 0,
+  hintCat: null,
+  hintAlpha: 0,
+  _lastFoundTime: 0,
+  // 粒子系统
+  particles: [],
 };
 
 // ==================== 初始化 ====================
@@ -1174,6 +1183,10 @@ function initGame(roomIdx) {
   game.activeTool = null; game.retryBtn = null; game.nextLevelBtn = null; game.selectBtn = null;
   game.laserCooldown = 0; game.laserActive = false; game.laserTimer = 0;
   game.catnipCooldown = 0; game.catnipActive = false; game.catnipTimer = 0;
+  game.playTime = 0;
+  game.hintTimer = 0; game.hintCat = null; game.hintAlpha = 0;
+  game._lastFoundTime = 0;
+  game.particles = [];
 
   // 随机放置当前房间的物品
   var roomItems = placeItems(room.items);
@@ -1430,6 +1443,43 @@ function update() {
     game.shakeX = (Math.random()-0.5) * 8;
     game.shakeY = (Math.random()-0.5) * 8;
     if (game.shakeTimer <= 0) { game.shakeX = 0; game.shakeY = 0; }
+  }
+
+  // 计时器
+  if (game.state === 'playing') {
+    game.playTime += dt;
+  }
+
+  // 提示系统：15秒没找到猫，给出微光提示
+  if (game.state === 'playing') {
+    game._lastFoundTime += dt;
+    if (game._lastFoundTime >= 15) {
+      var unfound = game.cats.filter(function(c){ return !c.found; });
+      if (unfound.length > 0) {
+        game.hintCat = unfound[Math.floor(Math.random() * unfound.length)];
+        game.hintTimer = 2.0;
+        game.hintAlpha = 0;
+        game._lastFoundTime = 0;
+      }
+    }
+    if (game.hintTimer > 0) {
+      game.hintTimer -= dt;
+      if (game.hintTimer > 1.5) game.hintAlpha = (2.0 - game.hintTimer) / 0.5;
+      else if (game.hintTimer < 0.5) game.hintAlpha = game.hintTimer / 0.5;
+      else game.hintAlpha = 1;
+      if (game.hintTimer <= 0) { game.hintCat = null; game.hintAlpha = 0; }
+    }
+  }
+
+  // 粒子更新
+  for (var pi = game.particles.length - 1; pi >= 0; pi--) {
+    var p = game.particles[pi];
+    p.life -= dt;
+    if (p.life <= 0) { game.particles.splice(pi, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 80 * dt;
+    p.alpha = Math.min(1, p.life / p.maxLife * 2);
   }
 
   // Toast
@@ -1967,9 +2017,13 @@ function render() {
   });
 
   // 激光笔光点
+  // 提示微光
+  drawHint(ctx);
   if (game.laserActive) { drawLaserEffect(ctx); }
   // 猫薄荷效果
   if (game.catnipActive) { drawCatnipEffect(ctx); }
+  // 粒子
+  drawParticles(ctx);
 
   ctx.restore();
 
@@ -2006,6 +2060,13 @@ function drawHUD(ctx) {
   var heartStr = '';
   for (var i = 0; i < game.maxLives; i++) heartStr += i < game.lives ? '❤️' : '🖤';
   ctx.fillText(heartStr, 22, 33);
+  // 计时器
+  var mins = Math.floor(game.playTime / 60);
+  var secs = Math.floor(game.playTime % 60);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = '14px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.textAlign = 'center';
+  ctx.fillText(timeStr, VIEW_W/2, 33);
   // 找到计数
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
@@ -2171,6 +2232,11 @@ function drawEndScreen(ctx) {
   // 统计
   ctx.font = '18px sans-serif'; ctx.fillStyle = '#ddd';
   ctx.fillText('找到 ' + game.foundCount + ' / ' + game.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.40);
+  // 用时
+  var mins = Math.floor(game.playTime / 60);
+  var secs = Math.floor(game.playTime % 60);
+  ctx.font = '14px sans-serif'; ctx.fillStyle = '#999';
+  ctx.fillText('用时 ' + (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs, VIEW_W/2, VIEW_H*0.45);
 
   // 星级评价（仅胜利）
   if (isWin) {
@@ -2211,6 +2277,57 @@ function drawEndScreen(ctx) {
   ctx.fillStyle = '#ddd';
   ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
   game.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
+}
+
+// ==================== 粒子 & 提示 ====================
+function spawnParticles(cx, cy) {
+  var symbols = ['⭐', '✨', '💛', '🐱', '❤️'];
+  for (var i = 0; i < 12; i++) {
+    var angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+    var speed = 100 + Math.random() * 120;
+    var life = 0.8 + Math.random() * 0.6;
+    game.particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 60,
+      life: life, maxLife: life,
+      alpha: 1,
+      symbol: symbols[i % symbols.length],
+      size: 10 + Math.random() * 8,
+    });
+  }
+}
+
+function drawParticles(ctx) {
+  if (!game.particles.length) return;
+  for (var i = 0; i < game.particles.length; i++) {
+    var p = game.particles[i];
+    ctx.save();
+    ctx.globalAlpha = p.alpha * 0.9;
+    ctx.font = Math.round(p.size) + 'px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.symbol, p.x, p.y);
+    ctx.restore();
+  }
+}
+
+function drawHint(ctx) {
+  if (!game.hintCat || game.hintAlpha <= 0) return;
+  var cat = game.hintCat;
+  var cx = cat.x + cat.w / 2;
+  var cy = cat.y + cat.h / 2;
+  var radius = Math.max(cat.w, cat.h) * 0.7;
+  var pulse = Math.sin(Date.now() / 200) * 0.15;
+  ctx.save();
+  ctx.globalAlpha = (0.2 + pulse) * game.hintAlpha;
+  var grad = ctx.createRadialGradient(cx, cy, radius * 0.3, cx, cy, radius);
+  grad.addColorStop(0, 'rgba(255,215,0,0.5)');
+  grad.addColorStop(1, 'rgba(255,215,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 // ==================== 触控处理 ====================
@@ -2315,6 +2432,9 @@ function handleTap(vx, vy) {
     game.animTimer = 1.5;
     game.state = 'found_anim';
     game.toast = '找到了【' + hit.catRef.personality.name + '】! ' + hit.catRef.quote; game.toastTimer = 2.5;
+    game._lastFoundTime = 0;
+    game.hintTimer = 0; game.hintCat = null;
+    spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
   } else {
     // 点错了
     game.lives--; game.mistakes++;

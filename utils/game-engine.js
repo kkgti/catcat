@@ -63,6 +63,15 @@ function GameEngine() {
   this.selectBtn = null;
   // 关卡进度
   this.levelProgress = null;
+  // 计时器
+  this.playTime = 0;
+  // 提示系统
+  this.hintTimer = 0;
+  this.hintCat = null;
+  this.hintAlpha = 0;
+  this._lastFoundTime = 0;
+  // 粒子系统
+  this.particles = [];
   // 动画帧 ID
   this._rafId = null;
   // 回调
@@ -137,6 +146,12 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.catnipCooldown = 0;
   this.catnipActive = false;
   this.catnipTimer = 0;
+  this.playTime = 0;
+  this.hintTimer = 0;
+  this.hintCat = null;
+  this.hintAlpha = 0;
+  this._lastFoundTime = 0;
+  this.particles = [];
 
   var roomId = room.id;
 
@@ -340,6 +355,44 @@ GameEngine.prototype._update = function() {
     if (this.shakeTimer <= 0) { this.shakeX = 0; this.shakeY = 0; }
   }
 
+  // 计时器
+  if (this.state === 'playing') {
+    this.playTime += dt;
+  }
+
+  // 提示系统：15秒没找到猫，给出微光提示
+  if (this.state === 'playing') {
+    this._lastFoundTime += dt;
+    if (this._lastFoundTime >= 15) {
+      var unfound = this.cats.filter(function(c){ return !c.found; });
+      if (unfound.length > 0) {
+        this.hintCat = unfound[Math.floor(Math.random() * unfound.length)];
+        this.hintTimer = 2.0;
+        this.hintAlpha = 0;
+        this._lastFoundTime = 0;
+      }
+    }
+    if (this.hintTimer > 0) {
+      this.hintTimer -= dt;
+      // 淡入淡出：前0.5秒淡入，后0.5秒淡出，中间保持
+      if (this.hintTimer > 1.5) this.hintAlpha = (2.0 - this.hintTimer) / 0.5;
+      else if (this.hintTimer < 0.5) this.hintAlpha = this.hintTimer / 0.5;
+      else this.hintAlpha = 1;
+      if (this.hintTimer <= 0) { this.hintCat = null; this.hintAlpha = 0; }
+    }
+  }
+
+  // 粒子更新
+  for (var pi = this.particles.length - 1; pi >= 0; pi--) {
+    var p = this.particles[pi];
+    p.life -= dt;
+    if (p.life <= 0) { this.particles.splice(pi, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 80 * dt; // 重力
+    p.alpha = Math.min(1, p.life / p.maxLife * 2);
+  }
+
   // Toast
   if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast = ''; }
 };
@@ -526,10 +579,14 @@ GameEngine.prototype._render = function() {
     }
   });
 
+  // 提示微光
+  this._drawHint(ctx);
   // 激光笔
   if (this.laserActive) this._drawLaserEffect(ctx);
   // 猫薄荷
   if (this.catnipActive) this._drawCatnipEffect(ctx);
+  // 粒子
+  this._drawParticles(ctx);
 
   ctx.restore();
   // 关闭外层 s*dpr+shake 变换，HUD/工具栏/Toast/结算在干净的 s*dpr 坐标下绘制
@@ -704,6 +761,14 @@ GameEngine.prototype._drawHUD = function(ctx) {
   var heartStr = '';
   for (var i = 0; i < this.maxLives; i++) heartStr += i < this.lives ? '❤️' : '🖤';
   ctx.fillText(heartStr, 22, 33);
+  // 计时器
+  var mins = Math.floor(this.playTime / 60);
+  var secs = Math.floor(this.playTime % 60);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = '14px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.textAlign = 'center';
+  ctx.fillText(timeStr, VIEW_W/2, 33);
+  // 猫计数
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
   ctx.fillText('🐱 ' + this.foundCount + ' / ' + this.catCount, VIEW_W-22, 33);
@@ -765,6 +830,11 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
 
   ctx.font = '18px sans-serif'; ctx.fillStyle = '#ddd';
   ctx.fillText('找到 ' + this.foundCount + ' / ' + this.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.40);
+  // 用时
+  var mins = Math.floor(this.playTime / 60);
+  var secs = Math.floor(this.playTime % 60);
+  ctx.font = '14px sans-serif'; ctx.fillStyle = '#999';
+  ctx.fillText('用时 ' + (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs, VIEW_W/2, VIEW_H*0.45);
 
   if (isWin) {
     ctx.font = '36px sans-serif';
@@ -802,6 +872,58 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
   ctx.fillStyle = '#ddd';
   ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
   this.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
+};
+
+// ========== 粒子 & 提示 ==========
+
+GameEngine.prototype._spawnParticles = function(cx, cy) {
+  var symbols = ['⭐', '✨', '💛', '🐱', '❤️'];
+  for (var i = 0; i < 12; i++) {
+    var angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+    var speed = 100 + Math.random() * 120;
+    var life = 0.8 + Math.random() * 0.6;
+    this.particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 60,
+      life: life, maxLife: life,
+      alpha: 1,
+      symbol: symbols[i % symbols.length],
+      size: 10 + Math.random() * 8,
+    });
+  }
+};
+
+GameEngine.prototype._drawParticles = function(ctx) {
+  if (!this.particles.length) return;
+  for (var i = 0; i < this.particles.length; i++) {
+    var p = this.particles[i];
+    ctx.save();
+    ctx.globalAlpha = p.alpha * 0.9;
+    ctx.font = Math.round(p.size) + 'px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.symbol, p.x, p.y);
+    ctx.restore();
+  }
+};
+
+GameEngine.prototype._drawHint = function(ctx) {
+  if (!this.hintCat || this.hintAlpha <= 0) return;
+  var cat = this.hintCat;
+  var cx = cat.x + cat.w / 2;
+  var cy = cat.y + cat.h / 2;
+  var radius = Math.max(cat.w, cat.h) * 0.7;
+  var pulse = Math.sin(Date.now() / 200) * 0.15;
+  ctx.save();
+  ctx.globalAlpha = (0.2 + pulse) * this.hintAlpha;
+  var grad = ctx.createRadialGradient(cx, cy, radius * 0.3, cx, cy, radius);
+  grad.addColorStop(0, 'rgba(255,215,0,0.5)');
+  grad.addColorStop(1, 'rgba(255,215,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 };
 
 // ========== 触控处理 ==========
@@ -902,6 +1024,10 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     this.state = 'found_anim';
     this.toast = '找到了【' + hit.catRef.personality.name + '】! ' + hit.catRef.quote;
     this.toastTimer = 2.5;
+    this._lastFoundTime = 0;
+    this.hintTimer = 0; this.hintCat = null;
+    // 生成庆祝粒子
+    this._spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
   } else {
     this.lives--;
     this.mistakes++;
