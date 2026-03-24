@@ -1,0 +1,11 @@
+.game-container {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #1a1a2e;
+}
+
+.game-canvas {
+  width: 100vw;
+  height: 100vh;
+}

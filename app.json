@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/game/game"
+  ],
+  "window": {
+    "navigationBarTitleText": "变身躲猫猫",
+    "navigationBarBackgroundColor": "#2c2c3a",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#1a1a2e"
+  }
+}

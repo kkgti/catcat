@@ -1,0 +1,2385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>变身躲猫猫 - 预览版</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas {
+  display: block;
+  max-width: 100vw;
+  max-height: 100vh;
+}
+#startScreen {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  z-index: 10;
+}
+#startScreen.hidden { display: none; }
+.title-emoji { font-size: 80px; margin-bottom: 10px; }
+.title { font-size: 36px; font-weight: bold; color: #ffd700; margin-bottom: 8px; }
+.subtitle { font-size: 14px; color: #aaa; margin-bottom: 30px; }
+.info-card {
+  background: rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 20px 30px;
+  margin-bottom: 40px;
+  max-width: 300px;
+  text-align: center;
+}
+.info-card p { color: #ddd; font-size: 14px; line-height: 1.8; }
+.start-btn {
+  width: 200px; height: 50px;
+  background: linear-gradient(135deg, #ffd700, #ffaa00);
+  border: none; border-radius: 25px;
+  font-size: 18px; font-weight: bold;
+  color: #1a1a2e; cursor: pointer;
+  box-shadow: 0 4px 15px rgba(255,215,0,0.3);
+}
+.start-btn:active { transform: scale(0.95); }
+.level-select { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: 360px; }
+.level-card {
+  width: 105px; padding: 14px 8px; border-radius: 14px;
+  background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.1);
+  text-align: center; cursor: pointer; transition: all 0.2s;
+}
+.level-card:active { transform: scale(0.95); }
+.level-card.unlocked:hover { border-color: #ffd700; background: rgba(255,215,0,0.1); }
+.level-card.locked { opacity: 0.4; cursor: default; }
+.level-card .lc-emoji { font-size: 32px; }
+.level-card .lc-name { color: #fff; font-size: 15px; font-weight: bold; margin: 6px 0 2px; }
+.level-card .lc-desc { color: #aaa; font-size: 11px; line-height: 1.3; }
+.level-card .lc-stars { font-size: 16px; margin-top: 6px; }
+.level-card .lc-lock { font-size: 24px; color: #888; }
+</style>
+</head>
+<body>
+
+<div id="startScreen">
+  <div class="title-emoji">🐱</div>
+  <div class="title">变身躲猫猫</div>
+  <div class="subtitle">Prop Hunt - 找出伪装的猫咪!</div>
+  <div class="info-card">
+    <p>猫咪变成了房间里的物品<br>滑动探索房间，观察可疑动静<br>点击可疑物品，找出所有猫咪<br>小心！点错会扣一颗心 ❤️</p>
+  </div>
+  <div id="levelSelect" class="level-select"></div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+// ==================== draw-utils ====================
+var DrawUtils = {
+  roundRect: function(ctx, x, y, w, h, r, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+  },
+  ellipse: function(ctx, cx, cy, rx, ry, fill) {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = fill; ctx.fill();
+  },
+  drawCat: function(ctx, x, y, size, color) {
+    var s = size;
+    this.ellipse(ctx, x, y + s*0.1, s*0.35, s*0.3, color);
+    ctx.beginPath(); ctx.arc(x, y - s*0.2, s*0.22, 0, Math.PI*2); ctx.fillStyle = color; ctx.fill();
+    // 耳朵
+    ctx.beginPath(); ctx.moveTo(x-s*0.18,y-s*0.35); ctx.lineTo(x-s*0.08,y-s*0.52); ctx.lineTo(x+s*0.02,y-s*0.35); ctx.fillStyle=color; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x-s*0.15,y-s*0.36); ctx.lineTo(x-s*0.09,y-s*0.47); ctx.lineTo(x,y-s*0.36); ctx.fillStyle='#ff9999'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x+s*0.18,y-s*0.35); ctx.lineTo(x+s*0.08,y-s*0.52); ctx.lineTo(x-s*0.02,y-s*0.35); ctx.fillStyle=color; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x+s*0.15,y-s*0.36); ctx.lineTo(x+s*0.09,y-s*0.47); ctx.lineTo(x,y-s*0.36); ctx.fillStyle='#ff9999'; ctx.fill();
+    // 眼睛
+    ctx.beginPath(); ctx.arc(x-s*0.08,y-s*0.22,s*0.045,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x+s*0.08,y-s*0.22,s*0.045,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x-s*0.06,y-s*0.24,s*0.018,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x+s*0.10,y-s*0.24,s*0.018,0,Math.PI*2); ctx.fill();
+    // 鼻+嘴
+    ctx.beginPath(); ctx.moveTo(x,y-s*0.15); ctx.lineTo(x-s*0.03,y-s*0.12); ctx.lineTo(x+s*0.03,y-s*0.12); ctx.fillStyle='#ff9999'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x,y-s*0.12); ctx.quadraticCurveTo(x-s*0.06,y-s*0.07,x-s*0.09,y-s*0.09); ctx.strokeStyle='#555'; ctx.lineWidth=1.2; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x,y-s*0.12); ctx.quadraticCurveTo(x+s*0.06,y-s*0.07,x+s*0.09,y-s*0.09); ctx.stroke();
+    // 胡须
+    ctx.lineWidth=0.8; ctx.strokeStyle='#888';
+    ctx.beginPath(); ctx.moveTo(x-s*0.12,y-s*0.14); ctx.lineTo(x-s*0.28,y-s*0.17); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-s*0.12,y-s*0.11); ctx.lineTo(x-s*0.28,y-s*0.11); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+s*0.12,y-s*0.14); ctx.lineTo(x+s*0.28,y-s*0.17); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+s*0.12,y-s*0.11); ctx.lineTo(x+s*0.28,y-s*0.11); ctx.stroke();
+    // 尾巴
+    ctx.beginPath(); ctx.moveTo(x+s*0.3,y+s*0.15); ctx.quadraticCurveTo(x+s*0.5,y-s*0.05,x+s*0.4,y-s*0.15);
+    ctx.strokeStyle=color; ctx.lineWidth=s*0.06; ctx.lineCap='round'; ctx.stroke(); ctx.lineCap='butt';
+  }
+};
+
+// ==================== 常量 ====================
+var VIEW_W = 750, VIEW_H = 900;     // 视口逻辑大小
+var ROOM_W = VIEW_W, ROOM_H = VIEW_H; // 等距视角下房间=视口（无滚动）
+var CAT_COLORS = ['#ff9944', '#ffcc66', '#aaaaaa', '#886644', '#ffddaa', '#dd8866'];
+
+// ==================== 透视房间参数 ====================
+// 透视房间结构（一点透视）
+var BACK_L = 60, BACK_R = 690;    // 后墙左右x
+var BACK_T = 75, BACK_B = 400;    // 后墙上下y
+var FLOOR_B = 760;                 // 地板底边y（工具栏上方）
+var ITEM_SCALE = 0.6;              // 后墙装饰品基准缩放
+// 透视缩放：远处（后墙）小、近处（前方）大 → 自然纵深感
+function getItemScale(y) {
+  var t = (y - BACK_B) / (FLOOR_B - BACK_B);
+  t = Math.max(0, Math.min(1, t));
+  return 0.55 + t * 0.30;         // 0.55（后墙）→ 0.85（最前方）
+}
+
+// ==================== 物品模板 ====================
+// zone: 'wall'(y:60-700), 'floor'(y:800-1320), 'any'
+var ITEM_TEMPLATES = [
+  {
+    id:'sofa', name:'沙发', w:260, h:110, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,12,'#8B6F47');
+      DrawUtils.roundRect(ctx,x+8,y+8,w-16,h*0.55,8,'#A0845C');
+      DrawUtils.roundRect(ctx,x+15,y+15,50,32,6,'#cc7755');
+      DrawUtils.roundRect(ctx,x+72,y+15,50,32,6,'#5588aa');
+      DrawUtils.roundRect(ctx,x+130,y+15,50,32,6,'#cc7755');
+      DrawUtils.roundRect(ctx,x+188,y+15,50,32,6,'#77aa77');
+    }
+  },
+  {
+    id:'table', name:'茶几', w:150, h:70, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#A0522D');
+      DrawUtils.roundRect(ctx,x+5,y+5,w-10,h-10,4,'#C4793A');
+    }
+  },
+  {
+    id:'tv', name:'电视', w:180, h:120, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,8,'#222');
+      DrawUtils.roundRect(ctx,x+8,y+8,w-16,h-30,4,'#334455');
+      ctx.fillStyle='rgba(100,150,200,0.1)'; ctx.fillRect(x+12,y+12,(w-24)*0.6,(h-38)*0.4);
+      DrawUtils.roundRect(ctx,x+65,y+h-18,50,16,3,'#333');
+    }
+  },
+  {
+    id:'tv_stand', name:'电视柜', w:280, h:45, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#5c4a3a');
+      DrawUtils.roundRect(ctx,x+5,y+3,80,h-6,3,'#4a3a2a');
+      DrawUtils.roundRect(ctx,x+90,y+3,80,h-6,3,'#4a3a2a');
+      DrawUtils.roundRect(ctx,x+175,y+3,100,h-6,3,'#4a3a2a');
+    }
+  },
+  {
+    id:'bookshelf', name:'书架', w:110, h:170, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#6b4226');
+      ctx.fillStyle='#5a3520'; ctx.fillRect(x+4,y+h*0.33,w-8,4); ctx.fillRect(x+4,y+h*0.66,w-8,4);
+      DrawUtils.roundRect(ctx,x+8,y+6,18,h*0.3-10,2,'#cc4444');
+      DrawUtils.roundRect(ctx,x+28,y+8,15,h*0.3-12,2,'#4466cc');
+      DrawUtils.roundRect(ctx,x+45,y+4,20,h*0.3-8,2,'#44aa44');
+      DrawUtils.roundRect(ctx,x+68,y+10,16,h*0.3-14,2,'#cc8844');
+      DrawUtils.roundRect(ctx,x+10,y+h*0.33+8,25,h*0.3-12,2,'#dd6666');
+      DrawUtils.roundRect(ctx,x+38,y+h*0.33+10,18,h*0.3-14,2,'#6688dd');
+      DrawUtils.roundRect(ctx,x+60,y+h*0.33+6,20,h*0.3-10,2,'#66bb66');
+      ctx.beginPath(); ctx.arc(x+25,y+h*0.66+25,12,0,Math.PI*2); ctx.fillStyle='#ddd'; ctx.fill();
+      DrawUtils.roundRect(ctx,x+55,y+h*0.66+10,30,35,3,'#aa8855');
+    }
+  },
+  {
+    id:'vase', name:'花瓶', w:40, h:70, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+w*0.3,y); ctx.quadraticCurveTo(x,y+h*0.6,x+w*0.15,y+h);
+      ctx.lineTo(x+w*0.85,y+h); ctx.quadraticCurveTo(x+w,y+h*0.6,x+w*0.7,y);
+      ctx.closePath(); ctx.fillStyle='#4488aa'; ctx.fill();
+      DrawUtils.ellipse(ctx,x+w*0.5,y-10,12,8,'#ff6688');
+      DrawUtils.ellipse(ctx,x+w*0.3,y-5,8,6,'#ff8866');
+    }
+  },
+  {
+    id:'candle', name:'蜡烛', w:30, h:60, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h-5,w*0.6,8,'#bb9944');
+      DrawUtils.roundRect(ctx,x+w*0.25,y+h*0.2,w*0.5,h*0.75,3,'#ffffee');
+      ctx.beginPath(); ctx.moveTo(x+w/2,y); ctx.quadraticCurveTo(x+w*0.7,y+h*0.12,x+w/2,y+h*0.2);
+      ctx.quadraticCurveTo(x+w*0.3,y+h*0.12,x+w/2,y); ctx.fillStyle='#ffaa33'; ctx.fill();
+    }
+  },
+  {
+    id:'lamp', name:'台灯', w:50, h:90, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+10,y); ctx.lineTo(x,y+35); ctx.lineTo(x+w,y+35); ctx.lineTo(x+w-10,y);
+      ctx.closePath(); ctx.fillStyle='#ffdd88'; ctx.fill();
+      ctx.fillStyle='rgba(255,221,136,0.15)'; ctx.beginPath(); ctx.arc(x+w/2,y+20,35,0,Math.PI*2); ctx.fill();
+      DrawUtils.roundRect(ctx,x+w/2-4,y+35,8,40,2,'#888');
+      DrawUtils.ellipse(ctx,x+w/2,y+h-5,18,6,'#666');
+    }
+  },
+  {
+    id:'clock', name:'时钟', w:55, h:55, zone:'wall_decor',
+    draw:function(ctx,x,y,w,h){
+      var cx=x+w/2,cy=y+h/2,r=w/2;
+      ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.fillStyle='#996633'; ctx.fill();
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fillStyle='#fffff0'; ctx.fill();
+      for(var i=0;i<12;i++){var a=(i/12)*Math.PI*2-Math.PI/2;
+        ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(r-6),cy+Math.sin(a)*(r-6));
+        ctx.lineTo(cx+Math.cos(a)*(r-2),cy+Math.sin(a)*(r-2)); ctx.strokeStyle='#333'; ctx.lineWidth=1.5; ctx.stroke();}
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+10,cy-8); ctx.strokeStyle='#333'; ctx.lineWidth=2.5; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx-4,cy-15); ctx.strokeStyle='#555'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  },
+  {
+    id:'plant', name:'盆栽', w:55, h:80, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+8,y+h*0.45); ctx.lineTo(x+2,y+h); ctx.lineTo(x+w-2,y+h); ctx.lineTo(x+w-8,y+h*0.45);
+      ctx.closePath(); ctx.fillStyle='#cc6633'; ctx.fill();
+      DrawUtils.ellipse(ctx,x+w*0.5,y+h*0.25,22,15,'#44aa55');
+      DrawUtils.ellipse(ctx,x+w*0.25,y+h*0.35,14,10,'#55bb66');
+      DrawUtils.ellipse(ctx,x+w*0.75,y+h*0.32,14,10,'#55bb66');
+    }
+  },
+  {
+    id:'pillow', name:'靠枕', w:55, h:45, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,12,'#ee8866');
+      ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(x+10,y+10); ctx.lineTo(x+w-10,y+h-10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w-10,y+10); ctx.lineTo(x+10,y+h-10); ctx.stroke();
+    }
+  },
+  {
+    id:'teddy', name:'玩偶熊', w:48, h:55, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.65,w*0.4,h*0.3,'#bb8844');
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.3,w*0.32,0,Math.PI*2); ctx.fillStyle='#cc9955'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.28,y+h*0.12,7,0,Math.PI*2); ctx.fillStyle='#bb8844'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.72,y+h*0.12,7,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.38,y+h*0.27,3,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.62,y+h*0.27,3,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.35,3,0,Math.PI*2); ctx.fillStyle='#885533'; ctx.fill();
+    }
+  },
+  {
+    id:'cup', name:'杯子', w:28, h:38, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#eee');
+      DrawUtils.roundRect(ctx,x+3,y+3,w-6,h*0.3,2,'#c8a070');
+      ctx.beginPath(); ctx.arc(x+w+5,y+h*0.4,8,-Math.PI*0.5,Math.PI*0.5);
+      ctx.strokeStyle='#ddd'; ctx.lineWidth=2.5; ctx.stroke();
+    }
+  },
+  {
+    id:'frame', name:'相框', w:70, h:55, zone:'wall_decor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,3,'#996633');
+      DrawUtils.roundRect(ctx,x+6,y+6,w-12,h-12,2,'#aaddff');
+      ctx.fillStyle='#88bb44'; ctx.fillRect(x+6,y+h*0.5,w-12,h*0.5-6);
+    }
+  },
+  {
+    id:'rug', name:'地毯', w:240, h:100, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,8,'#884466');
+      DrawUtils.roundRect(ctx,x+12,y+12,w-24,h-24,6,'#995577');
+      DrawUtils.roundRect(ctx,x+24,y+24,w-48,h-48,4,'#aa6688');
+      DrawUtils.ellipse(ctx,x+w/2,y+h/2,25,12,'#bb7799');
+    }
+  },
+  {
+    id:'shoe', name:'拖鞋', w:42, h:22, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,8,'#ff9977');
+      DrawUtils.roundRect(ctx,x+8,y+3,w*0.5,h*0.5,3,'#ffbb99');
+    }
+  },
+  {
+    id:'basket', name:'收纳篮', w:55, h:40, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.2,w,h*0.8,6,'#cc9966');
+      ctx.strokeStyle='#aa7744'; ctx.lineWidth=1;
+      for(var i=0;i<4;i++){var yy=y+h*0.3+i*h*0.16; ctx.beginPath(); ctx.moveTo(x+4,yy); ctx.lineTo(x+w-4,yy); ctx.stroke();}
+      ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h*0.2); ctx.quadraticCurveTo(x+w/2,y-2,x+w*0.7,y+h*0.2);
+      ctx.strokeStyle='#bb8855'; ctx.lineWidth=3; ctx.stroke();
+    }
+  },
+  {
+    id:'remote', name:'遥控器', w:22, h:55, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#222');
+      ctx.beginPath(); ctx.arc(x+w/2,y+12,4,0,Math.PI*2); ctx.fillStyle='#ff3333'; ctx.fill();
+      DrawUtils.roundRect(ctx,x+4,y+22,14,6,2,'#444');
+      DrawUtils.roundRect(ctx,x+4,y+31,14,6,2,'#444');
+    }
+  },
+  // ---- 新增物品，充实大房间 ----
+  {
+    id:'chair', name:'椅子', w:65, h:80, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      // 椅背
+      DrawUtils.roundRect(ctx,x+5,y,w-10,h*0.45,4,'#7a5c3a');
+      // 座面
+      DrawUtils.roundRect(ctx,x,y+h*0.4,w,h*0.25,4,'#8B6F47');
+      // 腿
+      ctx.fillStyle='#6a4c2a';
+      ctx.fillRect(x+5,y+h*0.65,6,h*0.35); ctx.fillRect(x+w-11,y+h*0.65,6,h*0.35);
+    }
+  },
+  {
+    id:'mirror', name:'镜子', w:50, h:70, zone:'wall_decor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,20,'#aa8855');
+      DrawUtils.roundRect(ctx,x+4,y+4,w-8,h-8,16,'#cce8ff');
+      // 反光
+      ctx.fillStyle='rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.moveTo(x+12,y+8); ctx.lineTo(x+22,y+8); ctx.lineTo(x+10,y+h*0.5); ctx.closePath(); ctx.fill();
+    }
+  },
+  {
+    id:'trashbin', name:'垃圾桶', w:40, h:55, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+4,y+h*0.15); ctx.lineTo(x,y+h); ctx.lineTo(x+w,y+h); ctx.lineTo(x+w-4,y+h*0.15);
+      ctx.closePath(); ctx.fillStyle='#889988'; ctx.fill();
+      DrawUtils.roundRect(ctx,x-2,y+h*0.08,w+4,h*0.1,3,'#778877');
+      // 盖子
+      DrawUtils.roundRect(ctx,x+2,y,w-4,h*0.12,4,'#99aa99');
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.06,3,0,Math.PI*2); ctx.fillStyle='#667766'; ctx.fill();
+    }
+  },
+  {
+    id:'fishbowl', name:'鱼缸', w:55, h:50, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      // 碗形
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.45,w*0.45,0,Math.PI*2); ctx.fillStyle='rgba(100,200,255,0.3)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.45,w*0.45,0,Math.PI*2); ctx.strokeStyle='rgba(150,220,255,0.5)'; ctx.lineWidth=2; ctx.stroke();
+      // 水面
+      ctx.fillStyle='rgba(80,180,240,0.2)'; ctx.fillRect(x+w*0.1,y+h*0.25,w*0.8,h*0.45);
+      // 鱼
+      ctx.beginPath(); ctx.ellipse(x+w*0.4,y+h*0.45,6,4,0,0,Math.PI*2); ctx.fillStyle='#ff6633'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w*0.4-6,y+h*0.45); ctx.lineTo(x+w*0.4-12,y+h*0.45-5); ctx.lineTo(x+w*0.4-12,y+h*0.45+5); ctx.closePath(); ctx.fill();
+      // 水草
+      ctx.beginPath(); ctx.moveTo(x+w*0.65,y+h*0.7); ctx.quadraticCurveTo(x+w*0.6,y+h*0.5,x+w*0.68,y+h*0.35);
+      ctx.strokeStyle='#44aa44'; ctx.lineWidth=2; ctx.stroke();
+    }
+  },
+  {
+    id:'umbrella', name:'雨伞', w:30, h:70, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      // 伞柄
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.15); ctx.lineTo(x+w/2,y+h*0.9);
+      ctx.strokeStyle='#886644'; ctx.lineWidth=3; ctx.stroke();
+      // 伞把弯钩
+      ctx.beginPath(); ctx.arc(x+w/2+6,y+h*0.9,6,0,Math.PI); ctx.strokeStyle='#886644'; ctx.lineWidth=3; ctx.stroke();
+      // 伞面（折叠状）
+      ctx.beginPath(); ctx.moveTo(x+w*0.2,y+h*0.15); ctx.lineTo(x+w/2,y); ctx.lineTo(x+w*0.8,y+h*0.15);
+      ctx.closePath(); ctx.fillStyle='#dd4466'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h*0.15); ctx.lineTo(x+w/2,y+h*0.02); ctx.strokeStyle='#cc3355'; ctx.lineWidth=1; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w*0.7,y+h*0.15); ctx.lineTo(x+w/2,y+h*0.02); ctx.stroke();
+    }
+  },
+  {
+    id:'books', name:'一摞书', w:45, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.6,w,h*0.4,2,'#cc4444');
+      DrawUtils.roundRect(ctx,x+2,y+h*0.35,w-4,h*0.3,2,'#4466cc');
+      DrawUtils.roundRect(ctx,x+4,y+h*0.1,w-8,h*0.3,2,'#44aa44');
+      DrawUtils.roundRect(ctx,x+1,y,w*0.7,h*0.15,2,'#cc8844');
+    }
+  },
+];
+
+// ---- 猫伪装模板（房间里不存在的新物品类型）----
+var CAT_DISGUISE_TEMPLATES = [
+  {
+    id:'dis_radio', name:'收音机', w:50, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,5,'#778899');
+      ctx.beginPath(); ctx.arc(x+w*0.35,y+h*0.5,h*0.3,0,Math.PI*2); ctx.fillStyle='#556677'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.72,y+h*0.35,5,0,Math.PI*2); ctx.fillStyle='#ffcc44'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.72,y+h*0.7,4,0,Math.PI*2); ctx.fillStyle='#ff6644'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w*0.85,y); ctx.lineTo(x+w*0.85,y-15); ctx.strokeStyle='#aaa'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  },
+  {
+    id:'dis_bottle', name:'水瓶', w:22, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.25,y,w*0.5,h*0.12,2,'#4499dd');
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.22,w*0.8,h*0.75,4,'#66bbee');
+      ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(x+w*0.15,y+h*0.45,w*0.7,h*0.48);
+      DrawUtils.roundRect(ctx,x+w*0.15,y+h*0.55,w*0.7,h*0.2,2,'#fff');
+    }
+  },
+  {
+    id:'dis_hat', name:'帽子', w:50, h:30, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.75,w*0.5,h*0.2,'#cc4444');
+      ctx.beginPath(); ctx.moveTo(x+w*0.15,y+h*0.7); ctx.quadraticCurveTo(x+w/2,y-h*0.1,x+w*0.85,y+h*0.7);
+      ctx.fillStyle='#dd5555'; ctx.fill();
+      ctx.fillStyle='#222'; ctx.fillRect(x+w*0.18,y+h*0.55,w*0.64,h*0.12);
+    }
+  },
+  {
+    id:'dis_guitar', name:'吉他', w:35, h:75, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.72,w*0.45,h*0.22,'#bb7733');
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.48,w*0.32,h*0.15,'#bb7733');
+      DrawUtils.roundRect(ctx,x+w*0.42,y,w*0.16,h*0.5,2,'#996622');
+      ctx.strokeStyle='#ddd'; ctx.lineWidth=0.5;
+      ctx.beginPath(); ctx.moveTo(x+w*0.45,y+h*0.05); ctx.lineTo(x+w*0.45,y+h*0.88); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w*0.55,y+h*0.05); ctx.lineTo(x+w*0.55,y+h*0.88); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.72,6,0,Math.PI*2); ctx.fillStyle='#664411'; ctx.fill();
+    }
+  },
+  {
+    id:'dis_globe', name:'地球仪', w:48, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.25,y+h*0.88,w*0.5,h*0.12,3,'#887766');
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.45); ctx.lineTo(x+w/2,y+h*0.88);
+      ctx.strokeStyle='#887766'; ctx.lineWidth=3; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.38,w*0.38,0,Math.PI*2); ctx.fillStyle='#4488bb'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.4,y+h*0.32,6,0,Math.PI*2); ctx.fillStyle='#55aa55'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.6,y+h*0.38,8,0,Math.PI*2); ctx.fill();
+    }
+  },
+  {
+    id:'dis_trophy', name:'奖杯', w:35, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.15,y+h*0.85,w*0.7,h*0.15,3,'#887755');
+      DrawUtils.roundRect(ctx,x+w*0.38,y+h*0.55,w*0.24,h*0.32,2,'#ccaa44');
+      ctx.beginPath(); ctx.moveTo(x+w*0.1,y+h*0.05); ctx.lineTo(x+w*0.15,y+h*0.45);
+      ctx.quadraticCurveTo(x+w/2,y+h*0.58,x+w*0.85,y+h*0.45);
+      ctx.lineTo(x+w*0.9,y+h*0.05); ctx.closePath(); ctx.fillStyle='#ffcc33'; ctx.fill();
+      ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='#996600'; ctx.fillText('★',x+w/2,y+h*0.28);
+    }
+  },
+  {
+    id:'dis_alarm', name:'闹钟', w:42, h:45, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.arc(x+w*0.25,y+h*0.12,6,0,Math.PI*2); ctx.fillStyle='#dd6644'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.75,y+h*0.12,6,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.5,w*0.42,0,Math.PI*2); ctx.fillStyle='#dd6644'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.5,w*0.35,0,Math.PI*2); ctx.fillStyle='#fffff0'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.5); ctx.lineTo(x+w/2+8,y+h*0.5-3);
+      ctx.strokeStyle='#333'; ctx.lineWidth=2; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.5); ctx.lineTo(x+w/2-2,y+h*0.5-10);
+      ctx.strokeStyle='#333'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  },
+];
+
+// ==================== 厨房物品模板 ====================
+var KITCHEN_ITEMS = [
+  { id:'fridge', name:'冰箱', w:100, h:180, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#e8e8e8');
+      ctx.strokeStyle='#ccc'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x+5,y+h*0.35); ctx.lineTo(x+w-5,y+h*0.35); ctx.stroke();
+      DrawUtils.roundRect(ctx,x+w-14,y+h*0.12,4,h*0.15,2,'#aaa');
+      DrawUtils.roundRect(ctx,x+w-14,y+h*0.45,4,h*0.2,2,'#aaa');
+    }},
+  { id:'stove', name:'灶台', w:120, h:80, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#333');
+      DrawUtils.roundRect(ctx,x+3,y+3,w-6,h-6,3,'#444');
+      ctx.strokeStyle='#777'; ctx.lineWidth=2;
+      [[0.25,0.35,14],[0.75,0.35,14],[0.25,0.7,10],[0.75,0.7,10]].forEach(function(b){
+        ctx.beginPath(); ctx.arc(x+w*b[0],y+h*b[1],b[2],0,Math.PI*2); ctx.stroke();
+      });
+    }},
+  { id:'k_counter', name:'料理台', w:250, h:50, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#c8b090');
+      DrawUtils.roundRect(ctx,x+5,y+5,w*0.4-5,h-10,3,'#b8a080');
+      DrawUtils.roundRect(ctx,x+w*0.45,y+5,w*0.5,h-10,3,'#b8a080');
+    }},
+  { id:'k_sink', name:'水槽', w:80, h:50, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#bbb');
+      ctx.beginPath(); ctx.ellipse(x+w/2,y+h*0.55,w*0.35,h*0.3,0,0,Math.PI*2); ctx.fillStyle='#999'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+5); ctx.lineTo(x+w/2,y-8); ctx.lineTo(x+w/2+12,y-8);
+      ctx.strokeStyle='#999'; ctx.lineWidth=3; ctx.stroke();
+    }},
+  { id:'microwave', name:'微波炉', w:65, h:45, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#ddd');
+      DrawUtils.roundRect(ctx,x+5,y+5,w*0.6,h-10,2,'#334');
+      ctx.beginPath(); ctx.arc(x+w*0.82,y+h*0.35,3,0,Math.PI*2); ctx.fillStyle='#66cc66'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.82,y+h*0.65,3,0,Math.PI*2); ctx.fillStyle='#888'; ctx.fill();
+    }},
+  { id:'pot', name:'汤锅', w:50, h:45, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.6,w*0.45,h*0.35,'#888');
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.55,w*0.38,h*0.28,'#555');
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.35,w*0.42,h*0.12,'#999');
+      ctx.fillStyle='#777'; ctx.fillRect(x-5,y+h*0.45,8,6); ctx.fillRect(x+w-3,y+h*0.45,8,6);
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.3,4,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+    }},
+  { id:'pan', name:'平底锅', w:60, h:30, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w*0.4,y+h*0.5,w*0.38,h*0.45,'#555');
+      DrawUtils.ellipse(ctx,x+w*0.4,y+h*0.45,w*0.3,h*0.32,'#666');
+      DrawUtils.roundRect(ctx,x+w*0.7,y+h*0.3,w*0.32,h*0.3,3,'#8B6F47');
+    }},
+  { id:'cutting_board', name:'砧板', w:55, h:38, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,5,'#d4a76a');
+      ctx.strokeStyle='rgba(0,0,0,0.08)'; ctx.lineWidth=0.5;
+      for(var i=1;i<6;i++){ ctx.beginPath(); ctx.moveTo(x+5,y+i*h/6); ctx.lineTo(x+w-5,y+i*h/6); ctx.stroke(); }
+    }},
+  { id:'toaster', name:'烤面包机', w:38, h:32, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.2,w,h*0.8,5,'#cc8844');
+      DrawUtils.roundRect(ctx,x+6,y,w*0.33,h*0.35,2,'#a86a30');
+      DrawUtils.roundRect(ctx,x+w*0.5,y,w*0.33,h*0.35,2,'#a86a30');
+    }},
+  { id:'kettle', name:'水壶', w:40, h:50, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.moveTo(x+w*0.2,y+h*0.25); ctx.quadraticCurveTo(x,y+h*0.7,x+w*0.15,y+h);
+      ctx.lineTo(x+w*0.85,y+h); ctx.quadraticCurveTo(x+w,y+h*0.7,x+w*0.8,y+h*0.25);
+      ctx.closePath(); ctx.fillStyle='#dd4444'; ctx.fill();
+      DrawUtils.roundRect(ctx,x+w*0.25,y+h*0.12,w*0.5,h*0.16,3,'#cc3333');
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.08,3,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x+w,y+h*0.35); ctx.lineTo(x+w+10,y+h*0.2);
+      ctx.strokeStyle='#cc3333'; ctx.lineWidth=4; ctx.stroke();
+    }},
+  { id:'fruit_bowl', name:'果盘', w:60, h:45, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.ellipse(x+w/2,y+h*0.7,w*0.48,h*0.28,0,0,Math.PI); ctx.fillStyle='#ddc8a0'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.35,y+h*0.45,8,0,Math.PI*2); ctx.fillStyle='#ff4444'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.55,y+h*0.4,7,0,Math.PI*2); ctx.fillStyle='#ffaa22'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.7,y+h*0.5,6,0,Math.PI*2); ctx.fillStyle='#44bb44'; ctx.fill();
+    }},
+  { id:'k_stool', name:'厨房凳', w:45, h:70, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+2,y,w-4,h*0.15,8,'#aa8866');
+      ctx.fillStyle='#8B6F47';
+      ctx.fillRect(x+6,y+h*0.15,5,h*0.85); ctx.fillRect(x+w-11,y+h*0.15,5,h*0.85);
+      ctx.fillRect(x+10,y+h*0.6,w-20,4);
+    }},
+];
+
+var KITCHEN_DISGUISES = [
+  { id:'dis_blender', name:'搅拌机', w:30, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.7,w*0.8,h*0.3,4,'#888');
+      ctx.beginPath(); ctx.moveTo(x+w*0.15,y+h*0.7); ctx.lineTo(x+w*0.2,y+h*0.15);
+      ctx.lineTo(x+w*0.8,y+h*0.15); ctx.lineTo(x+w*0.85,y+h*0.7); ctx.closePath();
+      ctx.fillStyle='rgba(150,200,255,0.4)'; ctx.fill(); ctx.strokeStyle='rgba(150,200,255,0.6)'; ctx.lineWidth=1; ctx.stroke();
+      DrawUtils.roundRect(ctx,x+w*0.25,y,w*0.5,h*0.18,3,'#666');
+    }},
+  { id:'dis_mug', name:'马克杯', w:32, h:35, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.1,w*0.75,h*0.9,4,'#4488aa');
+      ctx.beginPath(); ctx.arc(x+w*0.75+6,y+h*0.45,8,-Math.PI*0.4,Math.PI*0.4);
+      ctx.strokeStyle='#4488aa'; ctx.lineWidth=3; ctx.stroke();
+      DrawUtils.ellipse(ctx,x+w*0.375,y+h*0.15,w*0.3,h*0.08,'#c8a070');
+    }},
+  { id:'dis_rolling', name:'擀面杖', w:60, h:18, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.15,y+h*0.15,w*0.7,h*0.7,h*0.3,'#d4a76a');
+      ctx.fillStyle='#aa8855'; ctx.fillRect(x,y+h*0.3,w*0.18,h*0.4);
+      ctx.fillStyle='#aa8855'; ctx.fillRect(x+w*0.82,y+h*0.3,w*0.18,h*0.4);
+    }},
+  { id:'dis_thermos', name:'保温杯', w:25, h:55, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.15,w,h*0.85,4,'#336688');
+      DrawUtils.roundRect(ctx,x+w*0.15,y,w*0.7,h*0.2,3,'#557799');
+      ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.fillRect(x+3,y+h*0.4,w*0.3,h*0.35);
+    }},
+  { id:'dis_wafflemaker', name:'华夫饼机', w:42, h:38, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,6,'#222');
+      DrawUtils.roundRect(ctx,x+4,y+h*0.1,w-8,h*0.4,3,'#333');
+      ctx.strokeStyle='#444'; ctx.lineWidth=0.8;
+      for(var i=1;i<4;i++){ ctx.beginPath(); ctx.moveTo(x+6+i*8,y+h*0.12); ctx.lineTo(x+6+i*8,y+h*0.48); ctx.stroke(); }
+      for(var j=1;j<3;j++){ ctx.beginPath(); ctx.moveTo(x+6,y+h*0.12+j*6); ctx.lineTo(x+w-6,y+h*0.12+j*6); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(x+w+3,y+h*0.5,4,0,Math.PI*2); ctx.fillStyle='#44cc44'; ctx.fill();
+    }},
+];
+
+// ==================== 卧室物品模板 ====================
+var BEDROOM_ITEMS = [
+  { id:'bed', name:'床', w:220, h:130, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,8,'#6a5acd');
+      DrawUtils.roundRect(ctx,x+5,y+5,w-10,h-10,6,'#7b68ee');
+      DrawUtils.roundRect(ctx,x+10,y+10,60,30,10,'#eee');
+      DrawUtils.roundRect(ctx,x+80,y+12,55,28,10,'#eef');
+      ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(x+10,y+55); ctx.lineTo(x+w-10,y+55); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+10,y+80); ctx.lineTo(x+w-10,y+80); ctx.stroke();
+    }},
+  { id:'nightstand', name:'床头柜', w:55, h:50, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#5c4a3a');
+      DrawUtils.roundRect(ctx,x+4,y+h*0.55,w-8,h*0.35,3,'#4a3a2a');
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.72,3,0,Math.PI*2); ctx.fillStyle='#aa9977'; ctx.fill();
+    }},
+  { id:'wardrobe', name:'衣柜', w:130, h:190, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#7a5c3a');
+      DrawUtils.roundRect(ctx,x+5,y+5,w/2-8,h-10,3,'#8B6F47');
+      DrawUtils.roundRect(ctx,x+w/2+3,y+5,w/2-8,h-10,3,'#8B6F47');
+      DrawUtils.roundRect(ctx,x+w/2-5,y+h*0.4,4,h*0.15,2,'#aa9977');
+      DrawUtils.roundRect(ctx,x+w/2+1,y+h*0.4,4,h*0.15,2,'#aa9977');
+    }},
+  { id:'b_desk', name:'书桌', w:150, h:60, zone:'wall',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h*0.35,4,'#8B6F47');
+      ctx.fillStyle='#6a4c2a';
+      ctx.fillRect(x+8,y+h*0.35,6,h*0.65); ctx.fillRect(x+w-14,y+h*0.35,6,h*0.65);
+      DrawUtils.roundRect(ctx,x+w*0.55,y+h*0.35,w*0.35,h*0.55,3,'#7a5c3a');
+      ctx.beginPath(); ctx.arc(x+w*0.72,y+h*0.6,3,0,Math.PI*2); ctx.fillStyle='#aa9977'; ctx.fill();
+    }},
+  { id:'b_chair', name:'转椅', w:55, h:70, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+8,y,w-16,h*0.4,6,'#444');
+      DrawUtils.roundRect(ctx,x+3,y+h*0.35,w-6,h*0.2,4,'#555');
+      ctx.fillStyle='#777'; ctx.fillRect(x+w/2-3,y+h*0.55,6,h*0.25);
+      DrawUtils.ellipse(ctx,x+w/2,y+h*0.88,w*0.4,h*0.08,'#666');
+    }},
+  { id:'poster', name:'海报', w:80, h:60, zone:'wall_decor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,2,'#2a2a4a');
+      ctx.fillStyle='#fff';
+      [[0.2,0.3],[0.5,0.2],[0.8,0.4],[0.35,0.6],[0.65,0.7],[0.15,0.8]].forEach(function(p){
+        ctx.beginPath(); ctx.arc(x+w*p[0],y+h*p[1],1.5,0,Math.PI*2); ctx.fill();
+      });
+      DrawUtils.ellipse(ctx,x+w*0.7,y+h*0.25,12,12,'#ffd700');
+    }},
+  { id:'backpack', name:'书包', w:45, h:55, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.15,w,h*0.85,8,'#3366aa');
+      DrawUtils.roundRect(ctx,x+w*0.15,y,w*0.7,h*0.25,5,'#2255aa');
+      ctx.strokeStyle='#ffcc44'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h*0.35); ctx.lineTo(x+w*0.7,y+h*0.35); ctx.stroke();
+      DrawUtils.roundRect(ctx,x+w*0.2,y+h*0.5,w*0.6,h*0.3,4,'#2855aa');
+    }},
+  { id:'headphones', name:'耳机', w:40, h:42, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.35,w*0.4,Math.PI,0);
+      ctx.strokeStyle='#333'; ctx.lineWidth=4; ctx.stroke();
+      DrawUtils.ellipse(ctx,x+w*0.15,y+h*0.6,8,12,'#444');
+      DrawUtils.ellipse(ctx,x+w*0.85,y+h*0.6,8,12,'#444');
+      DrawUtils.ellipse(ctx,x+w*0.15,y+h*0.6,5,8,'#555');
+      DrawUtils.ellipse(ctx,x+w*0.85,y+h*0.6,5,8,'#555');
+    }},
+  { id:'b_slippers', name:'棉拖鞋', w:42, h:24, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w*0.45,h,8,'#aa6699');
+      DrawUtils.roundRect(ctx,x+w*0.55,y+h*0.1,w*0.45,h*0.9,8,'#aa6699');
+      DrawUtils.roundRect(ctx,x+4,y+2,w*0.45-8,h*0.4,4,'#cc88bb');
+      DrawUtils.roundRect(ctx,x+w*0.55+4,y+h*0.12,w*0.45-8,h*0.38,4,'#cc88bb');
+    }},
+  { id:'tissue_box', name:'纸巾盒', w:38, h:22, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y,w,h,4,'#66aacc');
+      DrawUtils.roundRect(ctx,x+w*0.3,y-4,w*0.4,h*0.4,2,'#fff');
+    }},
+  { id:'clothes_pile', name:'衣服堆', w:60, h:35, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+5,y+h*0.4,w*0.7,h*0.6,4,'#dd6666');
+      DrawUtils.roundRect(ctx,x+w*0.3,y+h*0.2,w*0.6,h*0.5,4,'#4488cc');
+      DrawUtils.roundRect(ctx,x+w*0.15,y,w*0.5,h*0.4,3,'#ffcc66');
+    }},
+  { id:'b_rug', name:'圆形地毯', w:140, h:90, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w/2,y+h/2,w*0.5,h*0.5,'#996677');
+      DrawUtils.ellipse(ctx,x+w/2,y+h/2,w*0.35,h*0.35,'#aa7788');
+      DrawUtils.ellipse(ctx,x+w/2,y+h/2,w*0.15,h*0.15,'#bb8899');
+    }},
+];
+
+var BEDROOM_DISGUISES = [
+  { id:'dis_musicbox', name:'音乐盒', w:38, h:32, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x,y+h*0.3,w,h*0.7,4,'#bb8844');
+      DrawUtils.roundRect(ctx,x+3,y+h*0.35,w-6,h*0.15,2,'#ddaa55');
+      ctx.beginPath(); ctx.moveTo(x+2,y+h*0.3); ctx.lineTo(x+w*0.3,y); ctx.lineTo(x+w-2,y+h*0.3);
+      ctx.closePath(); ctx.fillStyle='#cc9944'; ctx.fill();
+      ctx.font='10px sans-serif'; ctx.fillStyle='#ffd700'; ctx.textAlign='center'; ctx.fillText('♪',x+w*0.6,y+h*0.15);
+    }},
+  { id:'dis_snowglobe', name:'水晶球', w:42, h:48, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.15,y+h*0.8,w*0.7,h*0.2,3,'#555');
+      ctx.beginPath(); ctx.arc(x+w/2,y+h*0.45,w*0.4,0,Math.PI*2);
+      ctx.fillStyle='rgba(200,230,255,0.3)'; ctx.fill();
+      ctx.strokeStyle='rgba(200,230,255,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle='#cc6644'; ctx.fillRect(x+w*0.35,y+h*0.4,w*0.3,h*0.2);
+      ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h*0.4); ctx.lineTo(x+w/2,y+h*0.25); ctx.lineTo(x+w*0.7,y+h*0.4);
+      ctx.fillStyle='#884433'; ctx.fill();
+    }},
+  { id:'dis_piggy', name:'存钱罐', w:45, h:38, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.ellipse(ctx,x+w*0.45,y+h*0.55,w*0.4,h*0.35,'#ffaaaa');
+      ctx.beginPath(); ctx.arc(x+w*0.15,y+h*0.45,8,0,Math.PI*2); ctx.fillStyle='#ffbbbb'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.2,y+h*0.4,2,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.1,y+h*0.48,1.5,0,Math.PI*2); ctx.fillStyle='#dd8888'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.18,y+h*0.48,1.5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#cc8888'; ctx.fillRect(x+w*0.4,y+h*0.2,w*0.2,3);
+      ctx.fillStyle='#ffaaaa'; ctx.fillRect(x+w*0.25,y+h*0.8,5,h*0.2); ctx.fillRect(x+w*0.55,y+h*0.8,5,h*0.2);
+    }},
+  { id:'dis_toycar', name:'玩具车', w:48, h:25, zone:'floor',
+    draw:function(ctx,x,y,w,h){
+      DrawUtils.roundRect(ctx,x+w*0.1,y+h*0.2,w*0.8,h*0.5,4,'#ff4444');
+      ctx.beginPath(); ctx.moveTo(x+w*0.2,y+h*0.2); ctx.lineTo(x+w*0.3,y); ctx.lineTo(x+w*0.7,y); ctx.lineTo(x+w*0.8,y+h*0.2);
+      ctx.fillStyle='#66bbff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.22,y+h*0.85,h*0.15,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w*0.78,y+h*0.85,h*0.15,0,Math.PI*2); ctx.fill();
+    }},
+  { id:'dis_rubiks', name:'魔方', w:30, h:30, zone:'any',
+    draw:function(ctx,x,y,w,h){
+      var s=w/3; var colors=['#ff3333','#3366ff','#ffcc33','#33cc33','#ff9933','#ffffff'];
+      for(var r=0;r<3;r++) for(var c=0;c<3;c++){
+        ctx.fillStyle=colors[(r*3+c)%6]; ctx.fillRect(x+c*s+1,y+r*s+1,s-2,s-2);
+      }
+      ctx.strokeStyle='#111'; ctx.lineWidth=1.5; ctx.strokeRect(x,y,w,h);
+    }},
+];
+
+// ==================== 关卡配置 ====================
+var ROOMS = [
+  { id:'livingroom', name:'客厅', emoji:'🛋️', desc:'温馨客厅，猫咪入门级',
+    catCount:3, lives:3, behaviorMult:1.0,
+    items:ITEM_TEMPLATES, disguises:CAT_DISGUISE_TEMPLATES, bgType:'livingroom' },
+  { id:'kitchen', name:'厨房', emoji:'🍳', desc:'美食飘香，猫咪更机警',
+    catCount:4, lives:3, behaviorMult:1.3,
+    items:KITCHEN_ITEMS, disguises:KITCHEN_DISGUISES, bgType:'kitchen' },
+  { id:'bedroom', name:'卧室', emoji:'🛏️', desc:'安静卧室，狡猾猫出没',
+    catCount:5, lives:2, behaviorMult:1.6,
+    items:BEDROOM_ITEMS, disguises:BEDROOM_DISGUISES, bgType:'bedroom' },
+];
+
+// 关卡进度（尝试从 localStorage 读取）
+var levelProgress;
+try {
+  levelProgress = JSON.parse(localStorage.getItem('catHideProgress'));
+} catch(e) {}
+if (!levelProgress) {
+  levelProgress = { livingroom:{unlocked:true,stars:0}, kitchen:{unlocked:false,stars:0}, bedroom:{unlocked:false,stars:0} };
+}
+function saveProgress() {
+  try { localStorage.setItem('catHideProgress', JSON.stringify(levelProgress)); } catch(e) {}
+}
+
+// ==================== 布局系统（等距投影）====================
+function shuffle(arr) {
+  var a = arr.slice();
+  for (var i = a.length-1; i > 0; i--) { var j = Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; }
+  return a;
+}
+
+function checkOverlap(x, y, w, h, placed, pad) {
+  for (var i = 0; i < placed.length; i++) {
+    var p = placed[i];
+    if (x < p.x+p.w+pad && x+w+pad > p.x && y < p.y+p.h+pad && y+h+pad > p.y) return true;
+  }
+  return false;
+}
+
+// 等距区域：根据物品类型决定放置在哪个区域
+// ==================== 房间布局系统 ====================
+// 每个物品有固定位置 {x, y} = 底部中心点
+// depth: 用于排序，默认=y，桌面物品=桌子的y（在桌子之后绘制）
+var ROOM_LAYOUTS = {
+  // ========== 客厅 ==========
+  // 功能分区：后墙家具带 → 沙发区（居中）→ 前方入口区
+  livingroom: {
+    // ---- 后墙带 (y ≈ 408-415) ----
+    bookshelf:{x:140, y:412},              // 左侧靠墙
+    tv:{x:540, y:340},                     // 墙上挂式电视
+    tv_stand:{x:540, y:412},               // 电视柜紧贴后墙
+    plant:{x:660, y:415},                  // 电视柜旁绿植
+    // 电视柜上的摆件
+    vase:{x:490, y:380, depth:412},
+    fishbowl:{x:610, y:378, depth:412},
+    // ---- 墙面装饰 ----
+    clock:{x:375, y:180},
+    frame:{x:200, y:220},
+    mirror:{x:480, y:200},
+    // ---- 沙发区 (y ≈ 470-540) ----
+    sofa:{x:320, y:490},                   // 居中偏左，面朝电视
+    lamp:{x:140, y:485},                   // 紧挨沙发左侧
+    pillow:{x:260, y:480, depth:489},      // 沙发上
+    teddy:{x:395, y:485, depth:489},       // 沙发上
+    table:{x:340, y:535},                  // 茶几紧贴沙发前方
+    chair:{x:560, y:520},                  // 沙发对面/右侧
+    // 茶几上的物品（depth=茶几y，保证在茶几之后绘制）
+    cup:{x:360, y:510, depth:535},
+    remote:{x:320, y:512, depth:535},
+    candle:{x:380, y:508, depth:535},
+    books:{x:300, y:514, depth:535},
+    // ---- 地毯（先于沙发绘制 → depth 比沙发小）----
+    rug:{x:340, y:560, depth:470},
+    // ---- 前方入口区 (y ≈ 680-720) ----
+    basket:{x:120, y:690},
+    shoe:{x:360, y:710},
+    umbrella:{x:620, y:685},
+    trashbin:{x:580, y:715},
+  },
+  livingroom_extra: [
+    {x:200, y:560}, {x:460, y:480}, {x:600, y:600}, {x:280, y:650},
+    {x:500, y:680}, {x:160, y:620}, {x:440, y:440}, {x:650, y:540},
+  ],
+
+  // ========== 厨房 ==========
+  // 功能分区：后墙料理台带 → 中间操作区 → 前方
+  kitchen: {
+    // ---- 后墙料理台带 (y ≈ 408-415) ----
+    k_counter:{x:170, y:412},              // 左侧料理台
+    k_sink:{x:320, y:412},                 // 水槽
+    stove:{x:460, y:412},                  // 灶台
+    fridge:{x:640, y:412},                 // 冰箱靠右墙
+    // 台面上的物品
+    microwave:{x:135, y:378, depth:412},
+    toaster:{x:210, y:382, depth:412},
+    kettle:{x:270, y:376, depth:412},
+    cutting_board:{x:360, y:380, depth:412},
+    pot:{x:440, y:378, depth:412},
+    pan:{x:500, y:382, depth:412},
+    // ---- 中间区 ----
+    k_stool:{x:350, y:530},
+    fruit_bowl:{x:300, y:490},
+  },
+  kitchen_extra: [
+    {x:240, y:530}, {x:500, y:540}, {x:180, y:580}, {x:420, y:600},
+    {x:580, y:560},
+  ],
+
+  // ========== 卧室 ==========
+  // 功能分区：后墙衣柜/书桌 → 中间床区 → 前方
+  bedroom: {
+    // ---- 后墙带 ----
+    wardrobe:{x:140, y:412},               // 衣柜靠左墙
+    b_desk:{x:560, y:412},                 // 书桌靠右墙
+    poster:{x:370, y:195},                 // 墙上海报
+    // 书桌上物品
+    headphones:{x:600, y:378, depth:412},
+    tissue_box:{x:530, y:382, depth:412},
+    // ---- 床区 (y ≈ 500-550) ----
+    bed:{x:300, y:540},                    // 床居中偏左
+    nightstand:{x:140, y:530},             // 床头柜紧挨床左侧
+    b_chair:{x:530, y:520},               // 书桌椅
+    // ---- 地面 ----
+    b_rug:{x:320, y:600, depth:500},       // 床前地毯
+    backpack:{x:480, y:590},
+    b_slippers:{x:350, y:690},
+    clothes_pile:{x:200, y:630},
+  },
+  bedroom_extra: [
+    {x:420, y:510}, {x:200, y:600}, {x:580, y:590}, {x:340, y:520},
+    {x:520, y:670}, {x:160, y:670},
+  ],
+};
+
+// 检测两个矩形是否重叠
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
+}
+// 检测候选位置是否与已放置物品重叠
+function hasOverlap(ix, iy, sw, sh, placed) {
+  for (var j = 0; j < placed.length; j++) {
+    var p = placed[j];
+    if (rectsOverlap(ix, iy, sw, sh, p.x, p.y, p.w, p.h)) return true;
+  }
+  return false;
+}
+
+function placeItems(templates, existing) {
+  var placed = existing ? existing.slice() : [];
+  var result = [];
+  var roomId = ROOMS[game.currentRoomIdx].id;
+  var layout = ROOM_LAYOUTS[roomId] || {};
+  var extras = ROOM_LAYOUTS[roomId + '_extra'] || [];
+
+  for (var i = 0; i < templates.length; i++) {
+    var tmpl = templates[i];
+
+    // 构建候选位置列表：布局位置 → 备用位置 → 随机位置
+    var candidates = [];
+
+    // 1. 固定布局位置
+    var pos = layout[tmpl.id];
+    if (pos) {
+      candidates.push({
+        bx: pos.x + (Math.random() - 0.5) * 12,
+        by: pos.y + (Math.random() - 0.5) * 8,
+        dp: pos.depth || pos.y
+      });
+    }
+
+    // 2. 备用位置（打乱顺序避免总是用同一个）
+    var shuffledExtras = extras.slice();
+    for (var si = shuffledExtras.length - 1; si > 0; si--) {
+      var sj = Math.floor(Math.random() * (si + 1));
+      var tmp = shuffledExtras[si]; shuffledExtras[si] = shuffledExtras[sj]; shuffledExtras[sj] = tmp;
+    }
+    for (var ei = 0; ei < shuffledExtras.length; ei++) {
+      candidates.push({
+        bx: shuffledExtras[ei].x + (Math.random() - 0.5) * 20,
+        by: shuffledExtras[ei].y + (Math.random() - 0.5) * 15,
+        dp: shuffledExtras[ei].y
+      });
+    }
+
+    // 3. 随机后备
+    for (var ri = 0; ri < 8; ri++) {
+      var rbx = 100 + Math.random() * 550;
+      var rby = BACK_B + 60 + Math.random() * 240;
+      candidates.push({ bx: rbx, by: rby, dp: rby });
+    }
+
+    // 逐个尝试，选第一个不重叠的位置
+    var chosen = null;
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var c = candidates[ci];
+      var scale = (tmpl.zone === 'wall_decor') ? ITEM_SCALE : getItemScale(c.by);
+      var sw = tmpl.w * scale;
+      var sh = tmpl.h * scale;
+      var ix = c.bx - sw / 2;
+      var iy = c.by - sh;
+      ix = Math.max(4, Math.min(VIEW_W - sw - 4, ix));
+      iy = Math.max(4, Math.min(VIEW_H - sh - 4, iy));
+
+      if (!hasOverlap(ix, iy, sw, sh, placed)) {
+        chosen = { ix:ix, iy:iy, bx:ix+sw/2, by:iy+sh, sw:sw, sh:sh, dp:c.dp, scale:scale };
+        break;
+      }
+    }
+
+    // 全部重叠时兜底：用第一个候选位置
+    if (!chosen) {
+      var c = candidates[0];
+      var scale = (tmpl.zone === 'wall_decor') ? ITEM_SCALE : getItemScale(c.by);
+      var sw = tmpl.w * scale;
+      var sh = tmpl.h * scale;
+      var ix = Math.max(4, Math.min(VIEW_W - sw - 4, c.bx - sw/2));
+      var iy = Math.max(4, Math.min(VIEW_H - sh - 4, c.by - sh));
+      chosen = { ix:ix, iy:iy, bx:ix+sw/2, by:iy+sh, sw:sw, sh:sh, dp:c.dp, scale:scale };
+    }
+
+    var item = {
+      id:tmpl.id, name:tmpl.name, zone:tmpl.zone, draw:tmpl.draw,
+      origW:tmpl.w, origH:tmpl.h, scale:chosen.scale,
+      x:chosen.ix, y:chosen.iy, w:chosen.sw, h:chosen.sh,
+      baseX:chosen.bx, baseY:chosen.by, depth:chosen.dp
+    };
+    placed.push(item);
+    result.push(item);
+  }
+  return result;
+}
+
+// ==================== 猫语录 ====================
+var QUOTES = [
+  '你怎么发现我的！不可能！', '再给我5分钟好不好...',
+  '我变成拖鞋的时候脚好臭...', '你是不是开挂了？',
+  '我明明变得很像的！', '哼，下次我藏得更好！',
+  '被你找到了，好丢猫的脸...', '我还以为我已经融入环境了',
+  '说好的猫生自由呢？', '你盯着我看好久了对不对',
+  '别碰我！我是一本正经的书！', '猫猫我啊，最讨厌被找到了',
+  '你能假装没看见我吗...', '又被抓了，今天第几次了？',
+  '喵呜... 我认输了...', '我只是在这里午睡而已！',
+];
+
+// ==================== 猫性格系统 ====================
+// 每种性格决定穿帮频率、类型偏好和强度
+var CAT_PERSONALITIES = [
+  {
+    id: 'active',    name: '好动猫',
+    desc: '坐不住，频繁穿帮',
+    wobbleCooldown: [2, 4],     // 晃动间隔范围（秒）
+    wobbleDuration: [0.5, 0.8], // 晃动持续时间
+    wobbleStrength: 4,          // 晃动幅度（像素）
+    tailCooldown: [4, 8],       // 尾巴间隔
+    tailDuration: [1.2, 2.0],
+    bubbleCooldown: [5, 10],    // 气泡间隔
+    bubbleDuration: [1.5, 2.5],
+    bubbleTexts: ['喵~', '喵呜!', '好无聊~', '嘿嘿'],
+    eyeCooldown: [6, 12],       // 眼睛间隔
+    eyeDuration: [0.8, 1.5],
+    breathe: true,              // 是否有呼吸起伏
+    color: '#ff9944',
+  },
+  {
+    id: 'quiet',     name: '安静猫',
+    desc: '很少动，耐心观察才能发现',
+    wobbleCooldown: [8, 15],
+    wobbleDuration: [0.2, 0.4],
+    wobbleStrength: 2,
+    tailCooldown: [12, 22],
+    tailDuration: [0.6, 1.0],
+    bubbleCooldown: [15, 25],
+    bubbleDuration: [1.0, 1.5],
+    bubbleTexts: ['zzZ', '...', '💤'],
+    eyeCooldown: [10, 18],
+    eyeDuration: [0.5, 0.8],
+    breathe: true,
+    color: '#aaaaaa',
+  },
+  {
+    id: 'sneaky',    name: '狡猾猫',
+    desc: '穿帮很少，但会制造假线索',
+    wobbleCooldown: [6, 12],
+    wobbleDuration: [0.3, 0.5],
+    wobbleStrength: 2.5,
+    tailCooldown: [10, 18],
+    tailDuration: [0.5, 0.8],
+    bubbleCooldown: [12, 20],
+    bubbleDuration: [1.0, 1.5],
+    bubbleTexts: ['...嘻嘻', '🤫'],
+    eyeCooldown: [8, 14],
+    eyeDuration: [0.4, 0.7],
+    breathe: false,
+    color: '#886644',
+    fakeWobble: true,  // 会让附近普通物品假晃动
+  },
+  {
+    id: 'tsundere',  name: '傲娇猫',
+    desc: '忍不住嘲讽你，话很多',
+    wobbleCooldown: [4, 8],
+    wobbleDuration: [0.3, 0.6],
+    wobbleStrength: 3,
+    tailCooldown: [6, 12],
+    tailDuration: [1.0, 1.8],
+    bubbleCooldown: [4, 8],     // 气泡很频繁！
+    bubbleDuration: [2.0, 3.0],
+    bubbleTexts: ['你找不到我的~', '笨蛋!', '哼!', '看这边啦~', '我才不会动呢', '无聊...'],
+    eyeCooldown: [5, 10],
+    eyeDuration: [0.8, 1.2],
+    breathe: true,
+    color: '#ffcc66',
+  },
+];
+
+function randRange(arr) { return arr[0] + Math.random() * (arr[1] - arr[0]); }
+
+function pickQuote(used) {
+  var avail = QUOTES.filter(function(q){ return used.indexOf(q)===-1; });
+  if (!avail.length) avail = QUOTES;
+  var q = avail[Math.floor(Math.random()*avail.length)]; used.push(q); return q;
+}
+
+// ==================== 游戏引擎 ====================
+var game = {
+  state: 'ready', // ready, intro, playing, found_anim, wrong_anim, win, lose
+  ctx: null, canvas: null,
+  canvasW: 0, canvasH: 0, scale: 1, dpr: 1,
+  lives: 3, maxLives: 3,
+  catCount: 4, foundCount: 0,
+  currentRoomIdx: 0,
+  mistakes: 0,
+  cats: [], allItems: [],
+  animTimer: 0, currentFoundCat: null,
+  wrongItem: null, wrongAnimTimer: 0,
+  lastTime: 0,
+  toast: '', toastTimer: 0,
+  introTimer: 0,
+  // 相机
+  camX: 0, camY: 0,
+  // 触控
+  touchStartX: 0, touchStartY: 0,
+  touchStartCamX: 0, touchStartCamY: 0,
+  touchStartTime: 0,
+  isDragging: false,
+  // 屏幕震动
+  shakeTimer: 0, shakeX: 0, shakeY: 0,
+  // 假穿帮（狡猾猫制造）
+  fakeWobbles: [],
+  fakeWobbleTimer: 0,
+  // 工具系统
+  activeTool: null,    // null, 'laser', 'catnip'
+  laserCooldown: 0,    // 剩余冷却秒数
+  laserMaxCD: 12,
+  laserActive: false,  // 激光笔正在使用中
+  laserX: 0, laserY: 0, // 激光点房间坐标
+  laserTargetX: 0, laserTargetY: 0,
+  laserTimer: 0,       // 激光持续时间
+  catnipCooldown: 0,
+  catnipMaxCD: 18,
+  catnipActive: false,
+  catnipX: 0, catnipY: 0,
+  catnipTimer: 0,
+  catnipRadius: 200,   // 猫薄荷影响范围
+  toolBtns: [],        // 工具按钮位置 [{x,y,w,h,type}]
+  rafId: null,
+};
+
+// ==================== 初始化 ====================
+function initGame(roomIdx) {
+  if (roomIdx !== undefined) game.currentRoomIdx = roomIdx;
+  var room = ROOMS[game.currentRoomIdx];
+  var mult = room.behaviorMult;
+
+  game.state = 'intro';
+  game.catCount = room.catCount;
+  game.maxLives = room.lives;
+  game.lives = room.lives; game.foundCount = 0; game.mistakes = 0;
+  game.toast = ''; game.toastTimer = 0;
+  game.animTimer = 0; game.currentFoundCat = null;
+  game.wrongItem = null; game.shakeTimer = 0;
+  game.introTimer = 2.5;
+  game.fakeWobbles = [];
+  game.fakeWobbleTimer = 5 + Math.random() * 5;
+  game.activeTool = null; game.retryBtn = null; game.nextLevelBtn = null; game.selectBtn = null;
+  game.laserCooldown = 0; game.laserActive = false; game.laserTimer = 0;
+  game.catnipCooldown = 0; game.catnipActive = false; game.catnipTimer = 0;
+
+  // 随机放置当前房间的物品
+  var roomItems = placeItems(room.items);
+
+  // 随机选猫伪装模板
+  var disguises = shuffle(room.disguises).slice(0, game.catCount);
+  var occupied = roomItems.map(function(it){ return {x:it.x,y:it.y,w:it.w,h:it.h}; });
+  var usedQuotes = [];
+  game.cats = [];
+
+  for (var i = 0; i < disguises.length; i++) {
+    var tmpl = disguises[i];
+    var catPlaced = placeItems([tmpl], occupied);
+    var cp = catPlaced[0];
+    occupied.push({x:cp.x,y:cp.y,w:cp.w,h:cp.h});
+    // 分配性格（每只猫不同性格）
+    var personality = CAT_PERSONALITIES[i % CAT_PERSONALITIES.length];
+    game.cats.push({
+      id: 'cat_'+i,
+      x: cp.x, y: cp.y, w: cp.w, h: cp.h,
+      origW: cp.origW, origH: cp.origH, scale: cp.scale,
+      baseX: cp.baseX, baseY: cp.baseY, depth: cp.depth,
+      drawFn: cp.draw, name: cp.name,
+      quote: pickQuote(usedQuotes),
+      color: personality.color,
+      personality: personality,
+      found: false, foundAnim: 0,
+      behaviorMult: mult,
+      // 晃动（cooldown 乘以难度系数，越高等越久）
+      wobbleTimer: randRange(personality.wobbleCooldown) * mult,
+      wobbleActive: false, wobbleElapsed: 0,
+      wobbleDuration: randRange(personality.wobbleDuration),
+      wobbleCooldown: personality.wobbleCooldown,
+      wobbleStrength: personality.wobbleStrength,
+      // 尾巴
+      tailTimer: randRange(personality.tailCooldown) * mult,
+      tailActive: false, tailElapsed: 0,
+      tailDuration: randRange(personality.tailDuration),
+      // 气泡
+      bubbleTimer: randRange(personality.bubbleCooldown) * mult,
+      bubbleActive: false, bubbleElapsed: 0,
+      bubbleDuration: randRange(personality.bubbleDuration),
+      bubbleText: '',
+      // 眼睛偷看
+      eyeTimer: randRange(personality.eyeCooldown) * mult,
+      eyeActive: false, eyeElapsed: 0,
+      eyeDuration: randRange(personality.eyeDuration),
+    });
+  }
+
+  // 合并所有物品
+  game.allItems = [];
+  roomItems.forEach(function(it){
+    game.allItems.push({ id:it.id, name:it.name, zone:it.zone, x:it.x, y:it.y, w:it.w, h:it.h,
+      origW:it.origW, origH:it.origH, scale:it.scale,
+      baseX:it.baseX, baseY:it.baseY, depth:it.depth,
+      drawFn:it.draw, isCat:false });
+  });
+  game.cats.forEach(function(cat){
+    game.allItems.push({ id:cat.id, name:cat.name, zone:'floor', x:cat.x, y:cat.y, w:cat.w, h:cat.h,
+      origW:cat.origW, origH:cat.origH, scale:cat.scale,
+      baseX:cat.baseX, baseY:cat.baseY, depth:cat.depth,
+      drawFn:cat.drawFn, isCat:true, catRef:cat });
+  });
+
+  // 等距视角：房间=视口，无需相机偏移
+  game.camX = 0;
+  game.camY = 0;
+
+  game.lastTime = Date.now();
+}
+
+// 狡猾猫制造假穿帮
+function updateFakeWobbles(dt) {
+  // 更新现有假晃动
+  for (var i = game.fakeWobbles.length - 1; i >= 0; i--) {
+    game.fakeWobbles[i].elapsed += dt;
+    if (game.fakeWobbles[i].elapsed >= game.fakeWobbles[i].duration) {
+      game.fakeWobbles.splice(i, 1);
+    }
+  }
+  // 狡猾猫触发新假穿帮
+  game.fakeWobbleTimer -= dt;
+  if (game.fakeWobbleTimer <= 0) {
+    game.fakeWobbleTimer = 8 + Math.random() * 12;
+    // 找到有 fakeWobble 能力且未被发现的猫
+    var sneakyCats = game.cats.filter(function(c){ return !c.found && c.personality.fakeWobble; });
+    if (sneakyCats.length > 0) {
+      // 找一个距离狡猾猫较近的普通物品
+      var sc = sneakyCats[Math.floor(Math.random()*sneakyCats.length)];
+      var nearItems = game.allItems.filter(function(it){
+        if (it.isCat) return false;
+        var dx = (it.x+it.w/2)-(sc.x+sc.w/2), dy = (it.y+it.h/2)-(sc.y+sc.h/2);
+        return Math.sqrt(dx*dx+dy*dy) < 320;
+      });
+      if (nearItems.length > 0) {
+        var target = nearItems[Math.floor(Math.random()*nearItems.length)];
+        game.fakeWobbles.push({ itemId: target.id, elapsed: 0, duration: 0.3 + Math.random()*0.3 });
+      }
+    }
+  }
+}
+
+function getFakeWobble(itemId) {
+  for (var i = 0; i < game.fakeWobbles.length; i++) {
+    if (game.fakeWobbles[i].itemId === itemId) return game.fakeWobbles[i];
+  }
+  return null;
+}
+
+function clampCamera() {
+  game.camX = Math.max(0, Math.min(ROOM_W - VIEW_W, game.camX));
+  game.camY = Math.max(0, Math.min(ROOM_H - VIEW_H, game.camY));
+}
+
+// ==================== 更新逻辑 ====================
+function update() {
+  var now = Date.now();
+  var dt = Math.min((now - game.lastTime)/1000, 0.1);
+  game.lastTime = now;
+
+  // 开场提示
+  if (game.state === 'intro') {
+    game.introTimer -= dt;
+    if (game.introTimer <= 0) {
+      game.state = 'playing';
+      var rm = ROOMS[game.currentRoomIdx];
+      game.toast = rm.emoji + ' ' + rm.name + ' — 找出' + rm.catCount + '只猫!'; game.toastTimer = 2.5;
+    }
+  }
+
+  // 猫穿帮行为更新
+  if (game.state === 'playing' || game.state === 'intro') {
+    game.cats.forEach(function(cat) {
+      if (cat.found) return;
+      var p = cat.personality;
+      // 晃动
+      if (!cat.wobbleActive) {
+        cat.wobbleTimer -= dt;
+        if (cat.wobbleTimer <= 0) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = randRange(p.wobbleDuration); }
+      } else {
+        cat.wobbleElapsed += dt;
+        if (cat.wobbleElapsed >= cat.wobbleDuration) { cat.wobbleActive = false; cat.wobbleTimer = randRange(p.wobbleCooldown) * cat.behaviorMult; }
+      }
+      // 尾巴
+      if (!cat.tailActive) {
+        cat.tailTimer -= dt;
+        if (cat.tailTimer <= 0) { cat.tailActive = true; cat.tailElapsed = 0; cat.tailDuration = randRange(p.tailDuration); }
+      } else {
+        cat.tailElapsed += dt;
+        if (cat.tailElapsed >= cat.tailDuration) { cat.tailActive = false; cat.tailTimer = randRange(p.tailCooldown) * cat.behaviorMult; }
+      }
+      // 气泡
+      if (!cat.bubbleActive) {
+        cat.bubbleTimer -= dt;
+        if (cat.bubbleTimer <= 0) {
+          cat.bubbleActive = true; cat.bubbleElapsed = 0;
+          cat.bubbleDuration = randRange(p.bubbleDuration);
+          cat.bubbleText = p.bubbleTexts[Math.floor(Math.random() * p.bubbleTexts.length)];
+        }
+      } else {
+        cat.bubbleElapsed += dt;
+        if (cat.bubbleElapsed >= cat.bubbleDuration) { cat.bubbleActive = false; cat.bubbleTimer = randRange(p.bubbleCooldown) * cat.behaviorMult; }
+      }
+      // 眼睛偷看
+      if (!cat.eyeActive) {
+        cat.eyeTimer -= dt;
+        if (cat.eyeTimer <= 0) { cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = randRange(p.eyeDuration); }
+      } else {
+        cat.eyeElapsed += dt;
+        if (cat.eyeElapsed >= cat.eyeDuration) { cat.eyeActive = false; cat.eyeTimer = randRange(p.eyeCooldown) * cat.behaviorMult; }
+      }
+    });
+    // 狡猾猫的假穿帮：让附近的普通物品偶尔也晃一下
+    updateFakeWobbles(dt);
+  }
+
+  // 找到猫动画
+  if (game.state === 'found_anim') {
+    game.animTimer -= dt;
+    if (game.currentFoundCat) game.currentFoundCat.foundAnim = Math.min(1, 1 - game.animTimer/1.5);
+    if (game.animTimer <= 0) {
+      if (game.currentFoundCat) game.currentFoundCat.foundAnim = 1;
+      game.currentFoundCat = null;
+      if (game.foundCount >= game.cats.length) {
+        game.state = 'win';
+        // 保存进度
+        var stars = calcStars();
+        var pid = ROOMS[game.currentRoomIdx].id;
+        if (stars > levelProgress[pid].stars) levelProgress[pid].stars = stars;
+        if (game.currentRoomIdx < ROOMS.length - 1) {
+          levelProgress[ROOMS[game.currentRoomIdx + 1].id].unlocked = true;
+        }
+        saveProgress();
+      } else {
+        game.state = 'playing';
+      }
+    }
+  }
+
+  // 点错动画
+  if (game.state === 'wrong_anim') {
+    game.wrongAnimTimer -= dt;
+    if (game.wrongAnimTimer <= 0) {
+      game.wrongItem = null;
+      game.state = game.lives <= 0 ? 'lose' : 'playing';
+    }
+  }
+
+  // 工具冷却
+  if (game.laserCooldown > 0) game.laserCooldown -= dt;
+  if (game.catnipCooldown > 0) game.catnipCooldown -= dt;
+
+  // 激光笔效果
+  if (game.laserActive) {
+    game.laserTimer -= dt;
+    // 激光点缓动到目标
+    game.laserX += (game.laserTargetX - game.laserX) * 0.15;
+    game.laserY += (game.laserTargetY - game.laserY) * 0.15;
+    // 检查范围内的猫 → 强制触发眼睛+晃动
+    game.cats.forEach(function(cat) {
+      if (cat.found) return;
+      var dx = (cat.x+cat.w/2) - game.laserX, dy = (cat.y+cat.h/2) - game.laserY;
+      if (Math.sqrt(dx*dx+dy*dy) < 160) {
+        cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = 1.5;
+        if (!cat.wobbleActive) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = 0.8; }
+      }
+    });
+    if (game.laserTimer <= 0) { game.laserActive = false; game.activeTool = null; }
+  }
+
+  // 猫薄荷效果
+  if (game.catnipActive) {
+    game.catnipTimer -= dt;
+    game.cats.forEach(function(cat) {
+      if (cat.found) return;
+      var dx = (cat.x+cat.w/2) - game.catnipX, dy = (cat.y+cat.h/2) - game.catnipY;
+      if (Math.sqrt(dx*dx+dy*dy) < game.catnipRadius) {
+        // 强制穿帮：晃动+尾巴+气泡
+        if (!cat.wobbleActive) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = randRange([0.5, 1.0]); }
+        if (!cat.tailActive) { cat.tailActive = true; cat.tailElapsed = 0; cat.tailDuration = randRange([1.0, 2.0]); }
+        if (!cat.bubbleActive) {
+          cat.bubbleActive = true; cat.bubbleElapsed = 0; cat.bubbleDuration = 2.0;
+          cat.bubbleText = ['好香...', '这是什么!', '忍不住了...', '喵~!'][Math.floor(Math.random()*4)];
+        }
+      }
+    });
+    if (game.catnipTimer <= 0) { game.catnipActive = false; game.activeTool = null; }
+  }
+
+  // 震动
+  if (game.shakeTimer > 0) {
+    game.shakeTimer -= dt;
+    game.shakeX = (Math.random()-0.5) * 8;
+    game.shakeY = (Math.random()-0.5) * 8;
+    if (game.shakeTimer <= 0) { game.shakeX = 0; game.shakeY = 0; }
+  }
+
+  // Toast
+  if (game.toastTimer > 0) { game.toastTimer -= dt; if (game.toastTimer <= 0) game.toast = ''; }
+}
+
+// ==================== 渲染 ====================
+function drawRoomBackground(ctx) {
+  var bgType = ROOMS[game.currentRoomIdx].bgType;
+  if (bgType === 'kitchen') return drawKitchenBg(ctx);
+  if (bgType === 'bedroom') return drawBedroomBg(ctx);
+  return drawLivingroomBg(ctx);
+}
+
+// ---- 透视房间绘制（温馨风格） ----
+
+function drawPerspectiveRoom(ctx, sideWall, backWall, floorColor, floorColor2, ceilingColor) {
+  // 整体背景
+  ctx.fillStyle = ceilingColor;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 地板（梯形）
+  ctx.beginPath();
+  ctx.moveTo(BACK_L, BACK_B); ctx.lineTo(BACK_R, BACK_B);
+  ctx.lineTo(VIEW_W, FLOOR_B); ctx.lineTo(0, FLOOR_B);
+  ctx.closePath();
+  var fg = ctx.createLinearGradient(0, BACK_B, 0, FLOOR_B);
+  fg.addColorStop(0, floorColor2); fg.addColorStop(1, floorColor);
+  ctx.fillStyle = fg; ctx.fill();
+
+  // 左墙（渐变增加纵深感）
+  ctx.beginPath();
+  ctx.moveTo(BACK_L, BACK_T); ctx.lineTo(0, 0);
+  ctx.lineTo(0, FLOOR_B); ctx.lineTo(BACK_L, BACK_B);
+  ctx.closePath();
+  var lg = ctx.createLinearGradient(0, 0, BACK_L, 0);
+  lg.addColorStop(0, sideWall); lg.addColorStop(1, backWall);
+  ctx.fillStyle = lg; ctx.fill();
+
+  // 右墙
+  ctx.beginPath();
+  ctx.moveTo(BACK_R, BACK_T); ctx.lineTo(VIEW_W, 0);
+  ctx.lineTo(VIEW_W, FLOOR_B); ctx.lineTo(BACK_R, BACK_B);
+  ctx.closePath();
+  var rg = ctx.createLinearGradient(VIEW_W, 0, BACK_R, 0);
+  rg.addColorStop(0, sideWall); rg.addColorStop(1, backWall);
+  ctx.fillStyle = rg; ctx.fill();
+
+  // 后墙
+  ctx.fillStyle = backWall;
+  ctx.fillRect(BACK_L, BACK_T, BACK_R - BACK_L, BACK_B - BACK_T);
+
+  // 天花板
+  ctx.beginPath();
+  ctx.moveTo(BACK_L, BACK_T); ctx.lineTo(BACK_R, BACK_T);
+  ctx.lineTo(VIEW_W, 0); ctx.lineTo(0, 0);
+  ctx.closePath();
+  ctx.fillStyle = ceilingColor; ctx.fill();
+
+  // 柔和边线
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(BACK_L, BACK_T, BACK_R - BACK_L, BACK_B - BACK_T);
+  ctx.beginPath();
+  ctx.moveTo(BACK_L, BACK_T); ctx.lineTo(0, 0);
+  ctx.moveTo(BACK_R, BACK_T); ctx.lineTo(VIEW_W, 0);
+  ctx.moveTo(BACK_L, BACK_B); ctx.lineTo(0, FLOOR_B);
+  ctx.moveTo(BACK_R, BACK_B); ctx.lineTo(VIEW_W, FLOOR_B);
+  ctx.stroke();
+}
+
+// 木地板纹理（透视收敛的木板条）
+function drawWoodPlanks(ctx, dark, light, num) {
+  ctx.save();
+  // 纵向板条
+  for (var i = 0; i <= num; i++) {
+    var u = i / num;
+    var topX = BACK_L + (BACK_R - BACK_L) * u;
+    var botX = VIEW_W * u;
+    ctx.strokeStyle = (i % 2 === 0) ? dark : light;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(topX, BACK_B); ctx.lineTo(botX, FLOOR_B); ctx.stroke();
+  }
+  // 横向接缝
+  ctx.strokeStyle = dark; ctx.lineWidth = 0.3;
+  for (var r = 1; r < 7; r++) {
+    var t = r / 7;
+    var y = BACK_B + (FLOOR_B - BACK_B) * t;
+    var xl = BACK_L + (0 - BACK_L) * t;
+    var xr = BACK_R + (VIEW_W - BACK_R) * t;
+    ctx.beginPath(); ctx.moveTo(xl, y); ctx.lineTo(xr, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 瓷砖地板网格
+function drawFloorGrid(ctx, lineColor, rows, cols) {
+  ctx.save();
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 0.5;
+  for (var i = 1; i < rows; i++) {
+    var t = i / rows;
+    var y = BACK_B + (FLOOR_B - BACK_B) * t;
+    var xl = BACK_L + (0 - BACK_L) * t;
+    var xr = BACK_R + (VIEW_W - BACK_R) * t;
+    ctx.beginPath(); ctx.moveTo(xl, y); ctx.lineTo(xr, y); ctx.stroke();
+  }
+  for (var j = 1; j < cols; j++) {
+    var u = j / cols;
+    ctx.beginPath();
+    ctx.moveTo(BACK_L + (BACK_R - BACK_L) * u, BACK_B);
+    ctx.lineTo(VIEW_W * u, FLOOR_B);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 窗户（带窗帘 + 地板光斑）
+function drawWindow(ctx, lPct, rPct, tPct, bPct, skyColor, isNight) {
+  var wL = BACK_L + (BACK_R - BACK_L) * lPct;
+  var wR = BACK_L + (BACK_R - BACK_L) * rPct;
+  var wT = BACK_T + (BACK_B - BACK_T) * tPct;
+  var wB = BACK_T + (BACK_B - BACK_T) * bPct;
+  var wW = wR - wL, wH = wB - wT;
+
+  // 窗框（深木色）
+  ctx.fillStyle = '#5a4a3a';
+  ctx.fillRect(wL - 4, wT - 4, wW + 8, wH + 8);
+  // 天空
+  ctx.fillStyle = skyColor;
+  ctx.fillRect(wL, wT, wW, wH);
+  // 玻璃光泽
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(wL, wT, wW * 0.4, wH);
+  // 十字窗框
+  ctx.strokeStyle = '#5a4a3a'; ctx.lineWidth = 3;
+  var mx = (wL + wR) / 2, my = (wT + wB) / 2;
+  ctx.beginPath(); ctx.moveTo(mx, wT); ctx.lineTo(mx, wB); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(wL, my); ctx.lineTo(wR, my); ctx.stroke();
+
+  // 窗帘！温暖的布料质感
+  var curtColor = isNight ? 'rgba(120,100,140,0.75)' : 'rgba(180,140,90,0.7)';
+  var curtW = wW * 0.18;
+  ctx.fillStyle = curtColor;
+  // 左窗帘
+  ctx.beginPath();
+  ctx.moveTo(wL - 6, wT - 10);
+  ctx.lineTo(wL + curtW, wT - 10);
+  ctx.quadraticCurveTo(wL + curtW - 4, my, wL + curtW + 4, wB + 6);
+  ctx.lineTo(wL - 6, wB + 6);
+  ctx.closePath(); ctx.fill();
+  // 右窗帘
+  ctx.beginPath();
+  ctx.moveTo(wR + 6, wT - 10);
+  ctx.lineTo(wR - curtW, wT - 10);
+  ctx.quadraticCurveTo(wR - curtW + 4, my, wR - curtW - 4, wB + 6);
+  ctx.lineTo(wR + 6, wB + 6);
+  ctx.closePath(); ctx.fill();
+  // 窗帘褶皱
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(wL + curtW * 0.5, wT); ctx.lineTo(wL + curtW * 0.5, wB + 4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(wR - curtW * 0.5, wT); ctx.lineTo(wR - curtW * 0.5, wB + 4); ctx.stroke();
+  // 窗帘杆
+  ctx.strokeStyle = '#6a5a4a'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(wL - 16, wT - 12); ctx.lineTo(wR + 16, wT - 12); ctx.stroke();
+  // 杆头圆球
+  ctx.fillStyle = '#6a5a4a';
+  ctx.beginPath(); ctx.arc(wL - 16, wT - 12, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(wR + 16, wT - 12, 4, 0, Math.PI*2); ctx.fill();
+
+  // 地板光斑（阳光/月光洒进来）
+  ctx.save();
+  ctx.globalAlpha = isNight ? 0.04 : 0.07;
+  ctx.fillStyle = isNight ? '#aaaadd' : '#ffdd88';
+  ctx.beginPath();
+  ctx.moveTo(wL, BACK_B);
+  ctx.lineTo(wR, BACK_B);
+  ctx.lineTo(wR + (FLOOR_B - BACK_B) * 0.35, FLOOR_B - 50);
+  ctx.lineTo(wL - (FLOOR_B - BACK_B) * 0.08, FLOOR_B - 50);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  return {l:wL, r:wR, t:wT, b:wB};
+}
+
+// 吊灯（暖光光晕）
+function drawCeilingLight(ctx) {
+  var cx = (BACK_L + BACK_R) / 2, cy = BACK_T - 5;
+  // 灯线
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx, BACK_T - 45); ctx.lineTo(cx, cy); ctx.stroke();
+  // 灯罩
+  ctx.fillStyle = '#e8d8b0';
+  ctx.beginPath();
+  ctx.moveTo(cx - 20, cy); ctx.lineTo(cx + 20, cy);
+  ctx.lineTo(cx + 13, cy + 15); ctx.lineTo(cx - 13, cy + 15);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#c8b890'; ctx.lineWidth = 1; ctx.stroke();
+  // 暖光光晕 — 温馨的关键！
+  ctx.save();
+  var glow = ctx.createRadialGradient(cx, cy + 12, 4, cx, cy + 12, 140);
+  glow.addColorStop(0, 'rgba(255,220,150,0.14)');
+  glow.addColorStop(0.5, 'rgba(255,210,130,0.05)');
+  glow.addColorStop(1, 'rgba(255,200,100,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(cx - 140, cy - 30, 280, 180);
+  ctx.restore();
+}
+
+// 踢脚线 + 腰线
+function drawBaseboard(ctx, color) {
+  // 踢脚线
+  ctx.fillStyle = color;
+  ctx.fillRect(BACK_L, BACK_B - 12, BACK_R - BACK_L, 12);
+  // 踢脚线高光
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(BACK_L, BACK_B - 12, BACK_R - BACK_L, 2);
+  // 腰线装饰
+  var wainY = BACK_T + (BACK_B - BACK_T) * 0.55;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(BACK_L, wainY); ctx.lineTo(BACK_R, wainY); ctx.stroke();
+}
+
+// 暖光光晕（台灯、夜灯等）
+function drawWarmGlow(ctx, x, y, radius, color) {
+  ctx.save();
+  var g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  g.addColorStop(0, color);
+  g.addColorStop(1, color.replace(/[\d.]+\)$/, '0)'));
+  ctx.fillStyle = g;
+  ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  ctx.restore();
+}
+
+// ===================== 三个房间 =====================
+
+function drawLivingroomBg(ctx) {
+  // 温馨客厅 — 蜂蜜木色 + 暖灯光
+  drawPerspectiveRoom(ctx, '#7a6e5e', '#8a7d6e', '#9a7e58', '#8a7050', '#4a4038');
+  drawWoodPlanks(ctx, 'rgba(60,40,20,0.07)', 'rgba(60,40,20,0.03)', 12);
+  drawWindow(ctx, 0.12, 0.38, 0.12, 0.60, '#6699bb', false);
+  drawBaseboard(ctx, '#5a4a3a');
+  drawCeilingLight(ctx);
+  // 腰线下方护墙板（略深）
+  ctx.fillStyle = 'rgba(0,0,0,0.03)';
+  var wainY = BACK_T + (BACK_B - BACK_T) * 0.55;
+  ctx.fillRect(BACK_L, wainY, BACK_R - BACK_L, BACK_B - wainY - 12);
+  // 台灯暖光晕
+  drawWarmGlow(ctx, 110, 510, 130, 'rgba(255,200,100,0.06)');
+}
+
+function drawKitchenBg(ctx) {
+  // 明亮厨房 — 奶油暖白
+  drawPerspectiveRoom(ctx, '#c8b898', '#ddd0b8', '#c0a878', '#b09868', '#d8ccb0');
+  drawFloorGrid(ctx, 'rgba(100,80,50,0.06)', 10, 10);
+  // 后墙瓷砖
+  ctx.strokeStyle = 'rgba(0,0,0,0.04)'; ctx.lineWidth = 0.5;
+  for (var t = 0; t < (BACK_B - BACK_T); t += 25) {
+    ctx.beginPath(); ctx.moveTo(BACK_L, BACK_T + t); ctx.lineTo(BACK_R, BACK_T + t); ctx.stroke();
+  }
+  for (var s = 0; s < (BACK_R - BACK_L); s += 35) {
+    ctx.beginPath(); ctx.moveTo(BACK_L + s, BACK_T); ctx.lineTo(BACK_L + s, BACK_B); ctx.stroke();
+  }
+  drawWindow(ctx, 0.35, 0.62, 0.10, 0.50, '#88bbdd', false);
+  drawBaseboard(ctx, '#a09078');
+  drawCeilingLight(ctx);
+}
+
+function drawBedroomBg(ctx) {
+  // 温馨卧室 — 夜间柔紫 + 月光
+  drawPerspectiveRoom(ctx, '#6a6080', '#7a7090', '#7a6858', '#6a5848', '#3a3248');
+  drawWoodPlanks(ctx, 'rgba(0,0,0,0.04)', 'rgba(0,0,0,0.02)', 10);
+  // 后墙上的星星壁纸
+  ctx.fillStyle = 'rgba(255,255,200,0.06)';
+  for (var si = 0; si < 25; si++) {
+    var sx = BACK_L + 15 + ((si * 47) % (BACK_R - BACK_L - 30));
+    var sy = BACK_T + 12 + ((si * 31) % (BACK_B - BACK_T - 24));
+    var sr = 0.8 + (si % 4) * 0.5;
+    ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI*2); ctx.fill();
+  }
+  // 夜间窗户 + 月亮
+  var win = drawWindow(ctx, 0.55, 0.82, 0.10, 0.55, '#223355', true);
+  // 月亮
+  var moonX = win.l + (win.r - win.l) * 0.3, moonY = win.t + (win.b - win.t) * 0.3;
+  ctx.beginPath(); ctx.arc(moonX, moonY, 10, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,200,0.5)'; ctx.fill();
+  // 月光柔光
+  ctx.save();
+  var mg = ctx.createRadialGradient(moonX, moonY, 3, moonX, moonY, 60);
+  mg.addColorStop(0, 'rgba(220,220,255,0.10)');
+  mg.addColorStop(1, 'rgba(220,220,255,0)');
+  ctx.fillStyle = mg;
+  ctx.fillRect(moonX - 60, moonY - 60, 120, 120);
+  ctx.restore();
+
+  drawBaseboard(ctx, '#5a5040');
+  drawCeilingLight(ctx);
+  // 床头灯暖光
+  drawWarmGlow(ctx, 120, 530, 110, 'rgba(255,190,100,0.06)');
+}
+
+function drawCatTail(ctx, cat, dx, dy) {
+  if (!cat.tailActive || cat.found) return;
+  var progress = cat.tailElapsed / cat.tailDuration;
+  var alpha = progress < 0.3 ? progress/0.3 : progress > 0.7 ? (1-progress)/0.3 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.8;
+  var baseX = dx !== undefined ? dx : cat.x;
+  var baseY = dy !== undefined ? dy : cat.y;
+  var tx = baseX + cat.w + 2;
+  var ty = baseY + cat.h * 0.7;
+  var sway = Math.sin(cat.tailElapsed * 5) * 6;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.quadraticCurveTo(tx + 12, ty - 15 + sway, tx + 8, ty - 28 + sway);
+  ctx.strokeStyle = cat.color;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  ctx.restore();
+}
+
+function drawCatBubble(ctx, cat, dx, dy) {
+  if (!cat.bubbleActive || cat.found) return;
+  var progress = cat.bubbleElapsed / cat.bubbleDuration;
+  var alpha = progress < 0.2 ? progress/0.2 : progress > 0.75 ? (1-progress)/0.25 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.85;
+  var baseX = dx !== undefined ? dx : cat.x;
+  var baseY = dy !== undefined ? dy : cat.y;
+  var bx = baseX + cat.w * 0.5;
+  var by = baseY - 8;
+  // 浮动效果
+  by -= Math.sin(cat.bubbleElapsed * 2) * 3;
+  // 气泡背景
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  var tw = ctx.measureText(cat.bubbleText).width;
+  DrawUtils.roundRect(ctx, bx-tw/2-8, by-20, tw+16, 22, 8, 'rgba(255,255,255,0.9)');
+  // 小三角
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(bx-4, by+2); ctx.lineTo(bx+4, by+2); ctx.lineTo(bx, by+8); ctx.closePath(); ctx.fill();
+  // 文字
+  ctx.fillStyle = '#333';
+  ctx.fillText(cat.bubbleText, bx, by-2);
+  ctx.restore();
+}
+
+function drawCatEyes(ctx, cat, dx, dy) {
+  if (!cat.eyeActive || cat.found) return;
+  var progress = cat.eyeElapsed / cat.eyeDuration;
+  var alpha = progress < 0.25 ? progress/0.25 : progress > 0.7 ? (1-progress)/0.3 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.7;
+  var baseX = dx !== undefined ? dx : cat.x;
+  var baseY = dy !== undefined ? dy : cat.y;
+  // 两只小眼睛从物品底部偷看
+  var ex1 = baseX + cat.w * 0.35;
+  var ex2 = baseX + cat.w * 0.65;
+  var ey = baseY + cat.h - 4;
+  var eyeSize = 3;
+  // 眼白
+  ctx.fillStyle = cat.color;
+  ctx.beginPath(); ctx.arc(ex1, ey, eyeSize+1.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2, ey, eyeSize+1.5, 0, Math.PI*2); ctx.fill();
+  // 瞳孔
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(ex1, ey, eyeSize, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2, ey, eyeSize, 0, Math.PI*2); ctx.fill();
+  // 高光
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(ex1+1, ey-1, 1.2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex2+1, ey-1, 1.2, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawFoundCat(ctx, cat) {
+  var p = cat.foundAnim;
+  var cx = cat.x + cat.w/2, cy = cat.y + cat.h/2;
+  // 烟雾效果
+  if (p < 0.4) {
+    var smokeP = p / 0.4;
+    ctx.save(); ctx.globalAlpha = 1 - smokeP;
+    for (var i = 0; i < 5; i++) {
+      var angle = (i/5)*Math.PI*2 + p*3;
+      var dist = smokeP * 30;
+      ctx.beginPath(); ctx.arc(cx + Math.cos(angle)*dist, cy + Math.sin(angle)*dist, 8+smokeP*10, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill();
+    }
+    ctx.restore();
+  }
+  // 猫出现
+  if (p > 0.3) {
+    var catP = Math.min(1, (p - 0.3) / 0.5);
+    ctx.save();
+    ctx.globalAlpha = catP;
+    var catSize = 40 * catP;
+    DrawUtils.drawCat(ctx, cx, cy, catSize, cat.color);
+    // 语录
+    if (p > 0.5) {
+      var bubbleAlpha = Math.min(1, (p-0.5)/0.3);
+      ctx.globalAlpha = bubbleAlpha;
+      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      var tw = ctx.measureText(cat.quote).width;
+      DrawUtils.roundRect(ctx, cx - tw/2 - 10, cy - catSize - 30, tw + 20, 24, 8, 'rgba(0,0,0,0.75)');
+      ctx.fillStyle = '#ffd700'; ctx.fillText(cat.quote, cx, cy - catSize - 12);
+    }
+    ctx.restore();
+  }
+}
+
+function render() {
+  var ctx = game.ctx, s = game.scale, dpr = game.dpr;
+  ctx.clearRect(0, 0, game.canvasW*dpr, game.canvasH*dpr);
+  ctx.save();
+  ctx.scale(s*dpr, s*dpr);
+
+  // 开场
+  if (game.state === 'intro') {
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('房间里混入了 ' + game.catCount + ' 只猫咪!', VIEW_W/2, VIEW_H*0.4);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+    ctx.fillText('它们伪装成了各种物品', VIEW_W/2, VIEW_H*0.48);
+    ctx.fillText('仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.53);
+    // 倒计时
+    var cd = Math.ceil(game.introTimer);
+    ctx.font = 'bold 48px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.fillText(cd > 0 ? cd : 'GO!', VIEW_W/2, VIEW_H*0.65);
+    ctx.restore();
+    return;
+  }
+
+  // 震动偏移
+  ctx.translate(game.shakeX, game.shakeY);
+
+  // 房间背景（透视）
+  ctx.save();
+  drawRoomBackground(ctx);
+
+  // 深度排序（后方先画，前方后画）
+  game.allItems.sort(function(a, b) { return a.depth - b.depth; });
+
+  // 所有物品
+  game.allItems.forEach(function(item) {
+    if (item.isCat && item.catRef.found) {
+      drawFoundCat(ctx, item.catRef);
+      return;
+    }
+
+    // 计算晃动/呼吸偏移（屏幕像素）
+    var offsetX = 0, offsetY = 0;
+    if (item.isCat && item.catRef.wobbleActive) {
+      offsetX = Math.sin(item.catRef.wobbleElapsed * Math.PI * 8) * item.catRef.wobbleStrength;
+    }
+    if (item.isCat && item.catRef.personality.breathe && !item.catRef.found) {
+      offsetY = Math.sin(Date.now() / 800) * 1.2;
+    }
+    if (!item.isCat) {
+      var fw = getFakeWobble(item.id);
+      if (fw) { offsetX = Math.sin(fw.elapsed * Math.PI * 8) * 2.5; }
+    }
+
+    var drawBX = item.baseX + offsetX;
+    var drawBY = item.baseY + offsetY;
+
+    var itemScale = item.scale || ITEM_SCALE;
+
+    // 地板物品的阴影（让物品"站在"地板上）
+    if (item.zone !== 'wall_decor') {
+      ctx.save();
+      ctx.globalAlpha = 0.10;
+      ctx.fillStyle = '#000';
+      ctx.translate(item.baseX + offsetX, item.baseY + 2);
+      ctx.scale(1, 0.22);
+      ctx.beginPath();
+      ctx.arc(0, 0, item.w * 0.38, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 点错动画
+    if (game.wrongItem && game.wrongItem.id === item.id) {
+      ctx.save();
+      ctx.globalAlpha = 0.5 + Math.sin(game.wrongAnimTimer*20)*0.3;
+      ctx.fillStyle = 'rgba(255,50,50,0.3)';
+      ctx.fillRect(item.x + offsetX - 4, item.y + offsetY - 4, item.w + 8, item.h + 8);
+      ctx.translate(drawBX, drawBY);
+      ctx.scale(itemScale, itemScale);
+      item.drawFn(ctx, -item.origW/2, -item.origH, item.origW, item.origH);
+      ctx.restore();
+      return;
+    }
+
+    // 绘制物品
+    ctx.save();
+    ctx.translate(drawBX, drawBY);
+    ctx.scale(itemScale, itemScale);
+    item.drawFn(ctx, -item.origW/2, -item.origH, item.origW, item.origH);
+    ctx.restore();
+
+    // 猫的穿帮效果（在屏幕坐标系，传入偏移后的bbox坐标）
+    if (item.isCat) {
+      var catDrawX = item.x + offsetX, catDrawY = item.y + offsetY;
+      drawCatTail(ctx, item.catRef, catDrawX, catDrawY);
+      drawCatBubble(ctx, item.catRef, catDrawX, catDrawY);
+      drawCatEyes(ctx, item.catRef, catDrawX, catDrawY);
+    }
+  });
+
+  // 激光笔光点
+  if (game.laserActive) { drawLaserEffect(ctx); }
+  // 猫薄荷效果
+  if (game.catnipActive) { drawCatnipEffect(ctx); }
+
+  ctx.restore();
+
+  // ---- 以下是固定在屏幕上的 UI ----
+  // HUD
+  drawHUD(ctx);
+  // 工具栏
+  drawToolbar(ctx);
+
+  // (透视视角无需滚动提示和小地图)
+
+  // Toast
+  if (game.toast) {
+    ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var tw = ctx.measureText(game.toast).width;
+    DrawUtils.roundRect(ctx, VIEW_W/2-tw/2-15, VIEW_H*0.88-16, tw+30, 32, 12, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle = '#fff'; ctx.fillText(game.toast, VIEW_W/2, VIEW_H*0.88);
+  }
+
+  // 结算画面
+  if (game.state === 'win' || game.state === 'lose') {
+    drawEndScreen(ctx);
+  }
+
+  ctx.restore();
+}
+
+function drawHUD(ctx) {
+  // 顶部栏背景
+  DrawUtils.roundRect(ctx, 10, 10, VIEW_W-20, 44, 14, 'rgba(0,0,0,0.55)');
+  // 生命
+  ctx.font = '18px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  var heartStr = '';
+  for (var i = 0; i < game.maxLives; i++) heartStr += i < game.lives ? '❤️' : '🖤';
+  ctx.fillText(heartStr, 22, 33);
+  // 找到计数
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'right';
+  ctx.fillText('🐱 ' + game.foundCount + ' / ' + game.catCount, VIEW_W-22, 33);
+}
+
+function drawScrollHints(ctx) {
+  var alpha = 0.3 + Math.sin(Date.now()/500)*0.15;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  if (game.camY > 10) ctx.fillText('▲', VIEW_W/2, 70);
+  if (game.camY < ROOM_H - VIEW_H - 10) ctx.fillText('▼', VIEW_W/2, VIEW_H - 15);
+  if (game.camX > 10) ctx.fillText('◀', 12, VIEW_H/2);
+  if (game.camX < ROOM_W - VIEW_W - 10) ctx.fillText('▶', VIEW_W - 12, VIEW_H/2);
+  ctx.restore();
+}
+
+function drawMinimap(ctx) {
+  var mw = 80, mh = mw * (ROOM_H/ROOM_W);
+  var mx = VIEW_W - mw - 15, my = VIEW_H - mh - 20;
+  // 背景
+  ctx.save(); ctx.globalAlpha = 0.5;
+  DrawUtils.roundRect(ctx, mx-2, my-2, mw+4, mh+4, 4, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = '#4a4a6a'; ctx.fillRect(mx, my, mw, mh*0.55);
+  ctx.fillStyle = '#5c4a3a'; ctx.fillRect(mx, my+mh*0.55, mw, mh*0.45);
+  // 物品点
+  var sx = mw/ROOM_W, sy = mh/ROOM_H;
+  game.allItems.forEach(function(item) {
+    if (item.isCat && item.catRef.found) {
+      ctx.fillStyle = '#ffd700';
+    } else if (item.isCat) {
+      return; // 不显示未找到的猫
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    }
+    ctx.fillRect(mx + item.x*sx, my + item.y*sy, Math.max(2, item.w*sx), Math.max(2, item.h*sy));
+  });
+  // 视口框
+  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(mx + game.camX*sx, my + game.camY*sy, VIEW_W*sx, VIEW_H*sy);
+  ctx.restore();
+}
+
+function drawLaserEffect(ctx) {
+  var pulse = 0.6 + Math.sin(Date.now()/80) * 0.4;
+  // 光晕
+  ctx.save();
+  ctx.globalAlpha = 0.3 * pulse;
+  ctx.beginPath(); ctx.arc(game.laserX, game.laserY, 18, 0, Math.PI*2);
+  ctx.fillStyle = '#ff2200'; ctx.fill();
+  ctx.restore();
+  // 光点
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(game.laserX, game.laserY, 4, 0, Math.PI*2);
+  ctx.fillStyle = '#ff3300'; ctx.fill();
+  ctx.beginPath(); ctx.arc(game.laserX, game.laserY, 2, 0, Math.PI*2);
+  ctx.fillStyle = '#ff8866'; ctx.fill();
+  ctx.restore();
+}
+
+function drawCatnipEffect(ctx) {
+  var progress = 1 - game.catnipTimer / 3.0;
+  var alpha = progress < 0.2 ? progress/0.2 * 0.6 : progress > 0.7 ? (1-progress)/0.3 * 0.6 : 0.6;
+  ctx.save(); ctx.globalAlpha = alpha;
+  // 范围圈
+  ctx.beginPath(); ctx.arc(game.catnipX, game.catnipY, game.catnipRadius, 0, Math.PI*2);
+  ctx.strokeStyle = '#66dd66'; ctx.lineWidth = 2; ctx.setLineDash([8,4]); ctx.stroke(); ctx.setLineDash([]);
+  // 中心猫薄荷叶子
+  var t = Date.now() / 1000;
+  for (var i = 0; i < 6; i++) {
+    var angle = (i/6)*Math.PI*2 + t*0.5;
+    var dist = 8 + Math.sin(t*2+i)*4;
+    var lx = game.catnipX + Math.cos(angle)*dist;
+    var ly = game.catnipY + Math.sin(angle)*dist;
+    ctx.beginPath();
+    ctx.ellipse(lx, ly, 5, 3, angle, 0, Math.PI*2);
+    ctx.fillStyle = '#44cc44'; ctx.fill();
+  }
+  // 散发的粒子
+  for (var j = 0; j < 8; j++) {
+    var pa = (j/8)*Math.PI*2 + t;
+    var pd = game.catnipRadius * (0.3 + Math.sin(t+j*1.5)*0.2);
+    var px = game.catnipX + Math.cos(pa)*pd;
+    var py = game.catnipY + Math.sin(pa)*pd;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#88ee88'; ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawToolbar(ctx) {
+  if (game.state !== 'playing' && game.state !== 'found_anim' && game.state !== 'wrong_anim') return;
+  var btnSize = 50, pad = 12;
+  var startX = 15, startY = VIEW_H - btnSize - 20;
+  game.toolBtns = [];
+
+  // 激光笔按钮
+  var laserReady = game.laserCooldown <= 0 && !game.laserActive;
+  var laserSelected = game.activeTool === 'laser';
+  drawToolBtn(ctx, startX, startY, btnSize, '🔦', '激光笔', laserReady, laserSelected,
+    game.laserCooldown > 0 ? Math.ceil(game.laserCooldown) : 0);
+  game.toolBtns.push({ x:startX, y:startY, w:btnSize, h:btnSize, type:'laser' });
+
+  // 猫薄荷按钮
+  var catnipReady = game.catnipCooldown <= 0 && !game.catnipActive;
+  var catnipSelected = game.activeTool === 'catnip';
+  var cx2 = startX + btnSize + pad;
+  drawToolBtn(ctx, cx2, startY, btnSize, '🌿', '猫薄荷', catnipReady, catnipSelected,
+    game.catnipCooldown > 0 ? Math.ceil(game.catnipCooldown) : 0);
+  game.toolBtns.push({ x:cx2, y:startY, w:btnSize, h:btnSize, type:'catnip' });
+}
+
+function drawToolBtn(ctx, x, y, size, icon, label, ready, selected, cd) {
+  ctx.save();
+  // 背景
+  var bgColor = selected ? 'rgba(255,215,0,0.4)' : ready ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.4)';
+  DrawUtils.roundRect(ctx, x, y, size, size, 12, bgColor);
+  if (selected) {
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+    ctx.strokeRect(x+1, y+1, size-2, size-2);
+  }
+  // 图标
+  ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.globalAlpha = ready || selected ? 1 : 0.4;
+  ctx.fillText(icon, x+size/2, y+size/2 - 4);
+  // 标签
+  ctx.font = '9px sans-serif'; ctx.fillStyle = '#ccc';
+  ctx.fillText(label, x+size/2, y+size - 7);
+  // 冷却显示
+  if (cd > 0) {
+    ctx.globalAlpha = 0.8;
+    ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ff6666';
+    ctx.fillText(cd + 's', x+size/2, y+size/2 - 2);
+  }
+  ctx.restore();
+}
+
+function calcStars() {
+  if (game.state !== 'win') return 0;
+  if (game.mistakes === 0) return 3;
+  if (game.mistakes === 1) return 2;
+  return 1;
+}
+
+function drawEndScreen(ctx) {
+  ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  var room = ROOMS[game.currentRoomIdx];
+  var isWin = game.state === 'win';
+  var stars = calcStars();
+
+  // 标题
+  ctx.font = 'bold 32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = isWin ? '#ffd700' : '#ff6666';
+  ctx.fillText(isWin ? '全部找到!' : '游戏结束', VIEW_W/2, VIEW_H*0.28);
+
+  // 房间名
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText(room.emoji + ' ' + room.name, VIEW_W/2, VIEW_H*0.34);
+
+  // 统计
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#ddd';
+  ctx.fillText('找到 ' + game.foundCount + ' / ' + game.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.40);
+
+  // 星级评价（仅胜利）
+  if (isWin) {
+    ctx.font = '36px sans-serif';
+    var starStr = '';
+    for (var i = 0; i < 3; i++) starStr += i < stars ? '⭐' : '☆';
+    ctx.fillText(starStr, VIEW_W/2, VIEW_H*0.48);
+
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#bbb';
+    var desc = stars === 3 ? '完美! 零失误!' : stars === 2 ? '很棒! 只错了1次' : '过关了! 但要更仔细哦';
+    ctx.fillText(desc, VIEW_W/2, VIEW_H*0.54);
+
+    // 进度在 win 状态首次进入时已保存
+  }
+
+  // 重玩按钮
+  var btnY1 = VIEW_H * 0.60, btnW = 160, btnH = 42;
+  DrawUtils.roundRect(ctx, VIEW_W/2-btnW/2, btnY1, btnW, btnH, 22, '#ffd700');
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#1a1a2e';
+  ctx.fillText('再来一局', VIEW_W/2, btnY1 + btnH/2);
+  game.retryBtn = { x: VIEW_W/2-btnW/2, y: btnY1, w: btnW, h: btnH };
+
+  // 下一关按钮（仅胜利且非最后一关）
+  if (isWin && game.currentRoomIdx < ROOMS.length - 1) {
+    var btnY2 = VIEW_H * 0.69;
+    var nextRoom = ROOMS[game.currentRoomIdx + 1];
+    DrawUtils.roundRect(ctx, VIEW_W/2-btnW/2, btnY2, btnW, btnH, 22, '#66bbff');
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillText('下一关: ' + nextRoom.name, VIEW_W/2, btnY2 + btnH/2);
+    game.nextLevelBtn = { x: VIEW_W/2-btnW/2, y: btnY2, w: btnW, h: btnH };
+  } else {
+    game.nextLevelBtn = null;
+  }
+
+  // 返回选关按钮
+  var btnY3 = isWin && game.currentRoomIdx < ROOMS.length - 1 ? VIEW_H * 0.78 : VIEW_H * 0.69;
+  DrawUtils.roundRect(ctx, VIEW_W/2-btnW/2, btnY3, btnW, btnH, 22, 'rgba(255,255,255,0.15)');
+  ctx.fillStyle = '#ddd';
+  ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
+  game.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
+}
+
+// ==================== 触控处理 ====================
+function screenToView(sx, sy) {
+  var rect = game.canvas.getBoundingClientRect();
+  return { x: (sx - rect.left) / game.scale, y: (sy - rect.top) / game.scale };
+}
+
+function handleTouchStart(sx, sy) {
+  var v = screenToView(sx, sy);
+  game.touchStartX = v.x;
+  game.touchStartY = v.y;
+  game.touchStartTime = Date.now();
+  game.isDragging = false;
+}
+
+function handleTouchMove(sx, sy) {
+  var v = screenToView(sx, sy);
+  var dx = v.x - game.touchStartX;
+  var dy = v.y - game.touchStartY;
+  if (Math.abs(dx) > 5 || Math.abs(dy) > 5) game.isDragging = true;
+}
+
+function handleTouchEnd(sx, sy) {
+  if (game.isDragging) return;
+  var v = screenToView(sx, sy);
+  var elapsed = Date.now() - game.touchStartTime;
+  if (elapsed > 500) return;
+  handleTap(v.x, v.y);
+}
+
+function handleTap(vx, vy) {
+  // 结算画面按钮
+  if (game.state === 'win' || game.state === 'lose') {
+    // 重玩
+    if (game.retryBtn) {
+      var b = game.retryBtn;
+      if (vx >= b.x && vx <= b.x+b.w && vy >= b.y && vy <= b.y+b.h) { initGame(); return; }
+    }
+    // 下一关
+    if (game.nextLevelBtn) {
+      var nb = game.nextLevelBtn;
+      if (vx >= nb.x && vx <= nb.x+nb.w && vy >= nb.y && vy <= nb.y+nb.h) {
+        initGame(game.currentRoomIdx + 1); return;
+      }
+    }
+    // 返回选关
+    if (game.selectBtn) {
+      var sb = game.selectBtn;
+      if (vx >= sb.x && vx <= sb.x+sb.w && vy >= sb.y && vy <= sb.y+sb.h) {
+        showLevelSelect(); return;
+      }
+    }
+    return;
+  }
+
+  if (game.state !== 'playing') return;
+
+  // 检查工具栏按钮点击
+  for (var t = 0; t < game.toolBtns.length; t++) {
+    var tb = game.toolBtns[t];
+    if (vx >= tb.x && vx <= tb.x+tb.w && vy >= tb.y && vy <= tb.y+tb.h) {
+      handleToolBtnClick(tb.type);
+      return;
+    }
+  }
+
+  // 等距视角：视口坐标 = 房间坐标（无相机偏移）
+  var rx = vx;
+  var ry = vy;
+
+  // 如果激光笔模式激活，使用激光笔
+  if (game.activeTool === 'laser' && game.laserCooldown <= 0) {
+    game.laserActive = true;
+    game.laserX = rx; game.laserY = ry;
+    game.laserTargetX = rx; game.laserTargetY = ry;
+    game.laserTimer = 2.5;
+    game.laserCooldown = game.laserMaxCD;
+    game.activeTool = null;
+    game.toast = '激光笔启动! 观察猫的反应...'; game.toastTimer = 1.5;
+    return;
+  }
+
+  // 检查点击了哪个物品（从上层往下找）
+  var hit = null;
+  for (var i = game.allItems.length - 1; i >= 0; i--) {
+    var item = game.allItems[i];
+    if (item.isCat && item.catRef.found) continue;
+    if (rx >= item.x && rx <= item.x + item.w && ry >= item.y && ry <= item.y + item.h) {
+      hit = item; break;
+    }
+  }
+
+  if (!hit) return;
+
+  if (hit.isCat) {
+    // 找到猫!
+    hit.catRef.found = true;
+    hit.catRef.foundAnim = 0;
+    game.foundCount++;
+    game.currentFoundCat = hit.catRef;
+    game.animTimer = 1.5;
+    game.state = 'found_anim';
+    game.toast = '找到了【' + hit.catRef.personality.name + '】! ' + hit.catRef.quote; game.toastTimer = 2.5;
+  } else {
+    // 点错了
+    game.lives--; game.mistakes++;
+    game.wrongItem = hit;
+    game.wrongAnimTimer = 0.6;
+    game.shakeTimer = 0.3;
+    game.state = 'wrong_anim';
+    game.toast = '这不是猫咪! -1 ❤️'; game.toastTimer = 1.0;
+  }
+}
+
+function handleToolBtnClick(type) {
+  if (type === 'laser') {
+    if (game.laserCooldown > 0 || game.laserActive) {
+      game.toast = '激光笔冷却中...'; game.toastTimer = 0.8;
+      return;
+    }
+    if (game.activeTool === 'laser') {
+      game.activeTool = null; // 取消选择
+    } else {
+      game.activeTool = 'laser';
+      game.toast = '点击房间中任意位置使用激光笔'; game.toastTimer = 1.5;
+    }
+  } else if (type === 'catnip') {
+    if (game.catnipCooldown > 0 || game.catnipActive) {
+      game.toast = '猫薄荷冷却中...'; game.toastTimer = 0.8;
+      return;
+    }
+    // 直接在视口中心使用
+    game.catnipActive = true;
+    game.catnipX = VIEW_W / 2;
+    game.catnipY = (BACK_B + FLOOR_B) / 2;
+    game.catnipTimer = 3.0;
+    game.catnipCooldown = game.catnipMaxCD;
+    game.activeTool = null;
+    game.toast = '猫薄荷散发香气... 观察附近的物品!'; game.toastTimer = 2.0;
+  }
+}
+
+// ==================== 关卡选择 ====================
+function renderLevelSelect() {
+  var container = document.getElementById('levelSelect');
+  if (!container) return;
+  container.innerHTML = '';
+  ROOMS.forEach(function(room, idx) {
+    var prog = levelProgress[room.id];
+    var card = document.createElement('div');
+    card.className = 'level-card ' + (prog.unlocked ? 'unlocked' : 'locked');
+    if (prog.unlocked) {
+      var starsHtml = '';
+      for (var s = 0; s < 3; s++) starsHtml += s < prog.stars ? '⭐' : '☆';
+      card.innerHTML = '<div class="lc-emoji">' + room.emoji + '</div>' +
+        '<div class="lc-name">' + room.name + '</div>' +
+        '<div class="lc-desc">' + room.desc + '</div>' +
+        '<div class="lc-stars">' + starsHtml + '</div>';
+      card.addEventListener('click', function() { startLevel(idx); });
+    } else {
+      card.innerHTML = '<div class="lc-lock">🔒</div>' +
+        '<div class="lc-name">' + room.name + '</div>' +
+        '<div class="lc-desc">通关上一关解锁</div>';
+    }
+    container.appendChild(card);
+  });
+}
+
+function startLevel(idx) {
+  document.getElementById('startScreen').classList.add('hidden');
+  initGame(idx);
+  if (!game.rafId) gameLoop();
+}
+
+function showLevelSelect() {
+  if (game.rafId) { cancelAnimationFrame(game.rafId); game.rafId = null; }
+  game.state = 'ready';
+  renderLevelSelect();
+  document.getElementById('startScreen').classList.remove('hidden');
+}
+
+// ==================== 游戏循环 ====================
+function gameLoop() {
+  update();
+  render();
+  game.rafId = requestAnimationFrame(gameLoop);
+}
+
+// ==================== 启动 ====================
+window.addEventListener('DOMContentLoaded', function() {
+  var canvas = document.getElementById('gameCanvas');
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+
+  var aspect = VIEW_W / VIEW_H;
+  var cw, ch;
+  if (window.innerWidth / window.innerHeight < aspect) {
+    cw = window.innerWidth; ch = cw / aspect;
+  } else {
+    ch = window.innerHeight; cw = ch * aspect;
+  }
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  canvas.width = cw * dpr;
+  canvas.height = ch * dpr;
+
+  game.canvas = canvas; game.ctx = ctx;
+  game.canvasW = cw; game.canvasH = ch;
+  game.scale = cw / VIEW_W; game.dpr = dpr;
+
+  // 事件绑定
+  canvas.addEventListener('mousedown', function(e){ handleTouchStart(e.clientX, e.clientY); });
+  canvas.addEventListener('mousemove', function(e){ if(e.buttons) handleTouchMove(e.clientX, e.clientY); });
+  canvas.addEventListener('mouseup', function(e){ handleTouchEnd(e.clientX, e.clientY); });
+  canvas.addEventListener('touchstart', function(e){ e.preventDefault(); var t=e.touches[0]; handleTouchStart(t.clientX, t.clientY); });
+  canvas.addEventListener('touchmove', function(e){ e.preventDefault(); var t=e.touches[0]; handleTouchMove(t.clientX, t.clientY); });
+  canvas.addEventListener('touchend', function(e){ e.preventDefault(); var t=e.changedTouches[0]; handleTouchEnd(t.clientX, t.clientY); });
+
+  // 关卡选择
+  renderLevelSelect();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+<view class="container">
+  <view class="title-area">
+    <text class="title-emoji">🐱</text>
+    <text class="title">变身躲猫猫</text>
+    <text class="subtitle">找出藏在物品中的猫咪!</text>
+  </view>
+
+  <view class="info-card">
+    <text class="info-text">房间里的猫咪变成了各种物品</text>
+    <text class="info-text">点击可疑的物品，找出所有猫咪</text>
+    <text class="info-text">小心！点错会扣一颗心 ❤️</text>
+  </view>
+
+  <view class="start-btn" bindtap="onStartGame">
+    <text class="start-text">开始游戏</text>
+  </view>
+</view>
