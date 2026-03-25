@@ -15,6 +15,26 @@ var QUOTES = [
   '喵呜... 我认输了...', '我只是在这里午睡而已！',
 ];
 
+// 房间专属找到台词
+var ROOM_QUOTES = {
+  bathroom: [
+    '呜哇！差点被冲走了！', '我只是想泡个澡而已...',
+    '这里太滑了我站不稳啦！', '别拉我出去！水好暖和！',
+    '你闻到猫薄荷沐浴露了？', '哈啾！水汽太重了...',
+  ],
+  study: [
+    '我在看书你别打扰我！', '这本书真的很好看好吧！',
+    '你别翻了，我夹在第42页！', '书虫猫咪不想被找到...',
+    '我已经看到第三章了呢...', '安静！这里是图书馆！',
+  ],
+};
+
+// 房间专属气泡文字（与性格文字混合使用）
+var ROOM_BUBBLES = {
+  bathroom: ['好冷好冷~', '水...水要来了!', '别溅我!', '泡泡好多~', '喵~打滑了', '毛要湿了...', '哈啾!'],
+  study: ['这本书好好看~', '字好多...', '翻页翻页~', '书里有鱼吗?', '好想咬书角~', '安静安静...', '纸好香~'],
+};
+
 var CAT_PERSONALITIES = [
   {
     id: 'active', name: '好动猫', desc: '坐不住，频繁穿帮',
@@ -55,6 +75,24 @@ var CAT_PERSONALITIES = [
   },
 ];
 
+/**
+ * 获取气泡文字（混合性格文字和房间文字）
+ * @param {object} personality - 猫咪性格
+ * @param {string} roomId - 当前房间ID
+ * @returns {string} 随机气泡文字
+ */
+function getBubbleText(personality, roomId) {
+  var texts = personality.bubbleTexts.slice();
+  var roomTexts = ROOM_BUBBLES[roomId];
+  if (roomTexts) {
+    // 50%概率使用房间专属文字
+    if (Math.random() < 0.5) {
+      return roomTexts[Math.floor(Math.random() * roomTexts.length)];
+    }
+  }
+  return texts[Math.floor(Math.random() * texts.length)];
+}
+
 function shuffle(arr) {
   var a = arr.slice();
   for (var i = a.length-1; i > 0; i--) {
@@ -68,7 +106,17 @@ function randRange(arr) {
   return arr[0] + Math.random() * (arr[1] - arr[0]);
 }
 
-function pickQuote(used) {
+function pickQuote(used, roomId) {
+  // 40%概率使用房间专属台词
+  var roomQ = ROOM_QUOTES[roomId];
+  if (roomQ && Math.random() < 0.4) {
+    var rAvail = roomQ.filter(function(q){ return used.indexOf(q)===-1; });
+    if (rAvail.length) {
+      var rq = rAvail[Math.floor(Math.random()*rAvail.length)];
+      used.push(rq);
+      return rq;
+    }
+  }
   var avail = QUOTES.filter(function(q){ return used.indexOf(q)===-1; });
   if (!avail.length) avail = QUOTES;
   var q = avail[Math.floor(Math.random()*avail.length)];
@@ -177,8 +225,11 @@ function placeItems(templates, existing, roomId) {
 module.exports = {
   QUOTES: QUOTES,
   CAT_PERSONALITIES: CAT_PERSONALITIES,
+  ROOM_BUBBLES: ROOM_BUBBLES,
+  ROOM_QUOTES: ROOM_QUOTES,
   shuffle: shuffle,
   randRange: randRange,
   pickQuote: pickQuote,
   placeItems: placeItems,
+  getBubbleText: getBubbleText,
 };

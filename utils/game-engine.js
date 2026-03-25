@@ -235,7 +235,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
       origW: cp.origW, origH: cp.origH, scale: cp.scale,
       baseX: cp.baseX, baseY: cp.baseY, depth: cp.depth,
       drawFn: cp.draw, name: cp.name,
-      quote: catSystem.pickQuote(usedQuotes),
+      quote: catSystem.pickQuote(usedQuotes, roomId),
       color: personality.color,
       personality: personality,
       found: false, foundAnim: 0,
@@ -502,7 +502,7 @@ GameEngine.prototype._updateCatBehaviors = function(dt) {
       if (cat.bubbleTimer <= 0) {
         cat.bubbleActive = true; cat.bubbleElapsed = 0;
         cat.bubbleDuration = catSystem.randRange(p.bubbleDuration);
-        cat.bubbleText = p.bubbleTexts[Math.floor(Math.random() * p.bubbleTexts.length)];
+        cat.bubbleText = catSystem.getBubbleText(p, scene.ROOMS[this.currentRoomIdx].id);
       }
     } else {
       cat.bubbleElapsed += dt;
