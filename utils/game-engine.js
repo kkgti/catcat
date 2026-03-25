@@ -106,6 +106,12 @@ function GameEngine() {
   this.comboTimer = 0;
   this.comboWindow = 8;
   this.comboPopup = null;
+  // 暂停
+  this.paused = false;
+  this.pauseBtn = null;
+  this.pauseResumeBtn = null;
+  this.pauseRetryBtn = null;
+  this.pauseSelectBtn = null;
   // 过渡动画
   this.transTimer = 0;
   // 动画帧 ID
@@ -118,6 +124,12 @@ function GameEngine() {
   this._touchStartY = 0;
   this._touchStartTime = 0;
   this._isDragging = false;
+  // 关卡选择 Canvas UI
+  this.levelCards = [];
+  this.achieveBtnRect = null;
+  this.codexBtnRect = null;
+  this.subScreen = null;
+  this.subCloseBtn = null;
 }
 
 GameEngine.prototype.init = function(ctx, canvasW, canvasH, dpr) {
@@ -207,7 +219,8 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.shakeTimer = 0;
   this.introTimer = 5.0;
   this.fakeWobbles = [];
-  this.fakeWobbleTimer = 5 + Math.random() * 5;
+  var fwi = room.fakeWobbleInterval || [8, 20];
+  this.fakeWobbleTimer = fwi[0] + Math.random() * (fwi[1] - fwi[0]);
   this.activeTool = null;
   this.retryBtn = null;
   this.nextLevelBtn = null;
@@ -230,6 +243,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this._usedCatnip = false;
   this._hintTriggered = false;
   this.combo = 0; this.maxCombo = 0; this.comboTimer = 0; this.comboPopup = null;
+  this.paused = false;
 
   var roomId = room.id;
 
@@ -263,7 +277,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
       wobbleActive: false, wobbleElapsed: 0,
       wobbleDuration: catSystem.randRange(personality.wobbleDuration),
       wobbleCooldown: personality.wobbleCooldown,
-      wobbleStrength: personality.wobbleStrength,
+      wobbleStrength: personality.wobbleStrength * (room.wobbleStrengthMult || 1),
       tailTimer: catSystem.randRange(personality.tailCooldown) * mult,
       tailActive: false, tailElapsed: 0,
       tailDuration: catSystem.randRange(personality.tailDuration),
@@ -339,6 +353,8 @@ GameEngine.prototype.stop = function() {
 
 GameEngine.prototype._update = function() {
   var now = Date.now();
+  if (this.paused) { this.lastTime = now; return; }
+  if (this.state === 'ready') { this.lastTime = now; return; }
   var dt = Math.min((now - this.lastTime)/1000, 0.1);
   this.lastTime = now;
 
@@ -498,10 +514,11 @@ GameEngine.prototype._update = function() {
     if (this.comboPopup.timer <= 0) this.comboPopup = null;
   }
 
-  // 提示系统：15秒没找到猫，给出微光提示
+  // 提示系统：一定时间没找到猫，给出微光提示
   if (this.state === 'playing') {
+    var hintDelay = scene.ROOMS[this.currentRoomIdx].hintDelay || 15;
     this._lastFoundTime += dt;
-    if (this._lastFoundTime >= 15) {
+    if (this._lastFoundTime >= hintDelay) {
       var unfound = this.cats.filter(function(c){ return !c.found; });
       if (unfound.length > 0) {
         this.hintCat = unfound[Math.floor(Math.random() * unfound.length)];
@@ -589,7 +606,8 @@ GameEngine.prototype._updateFakeWobbles = function(dt) {
   }
   this.fakeWobbleTimer -= dt;
   if (this.fakeWobbleTimer <= 0) {
-    this.fakeWobbleTimer = 8 + Math.random() * 12;
+    var fwi2 = scene.ROOMS[this.currentRoomIdx].fakeWobbleInterval || [8, 20];
+    this.fakeWobbleTimer = fwi2[0] + Math.random() * (fwi2[1] - fwi2[0]);
     var sneakyCats = this.cats.filter(function(c){ return !c.found && c.personality.fakeWobble; });
     if (sneakyCats.length > 0) {
       var sc = sneakyCats[Math.floor(Math.random()*sneakyCats.length)];
@@ -736,6 +754,13 @@ GameEngine.prototype._render = function() {
   ctx.clearRect(0, 0, this.canvasW*dpr, this.canvasH*dpr);
   ctx.save();
   ctx.scale(s*dpr, s*dpr);
+
+  // 关卡选择画面
+  if (this.state === 'ready') {
+    this._drawLevelSelectScreen(ctx);
+    ctx.restore();
+    return;
+  }
 
   // 开场
   if (this.state === 'intro') {
@@ -889,6 +914,9 @@ GameEngine.prototype._render = function() {
     draw.roundRect(ctx, VIEW_W/2-tw/2-15, VIEW_H*0.88-16, tw+30, 32, 12, 'rgba(0,0,0,0.7)');
     ctx.fillStyle = '#fff'; ctx.fillText(this.toast, VIEW_W/2, VIEW_H*0.88);
   }
+
+  // 暂停菜单
+  this._drawPauseMenu(ctx);
 
   // 过渡动画
   if (this.state === 'win_trans') this._drawWinTransition(ctx);
@@ -1154,11 +1182,305 @@ GameEngine.prototype._drawHUD = function(ctx) {
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
   ctx.fillText('🐱 ' + this.foundCount + ' / ' + this.catCount, VIEW_W-22, 33);
+  // 暂停按钮
+  ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('⏸', VIEW_W - 56, 68);
+  this.pauseBtn = { x: VIEW_W - 72, y: 56, w: 32, h: 24 };
   // 音量按钮
   var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
-  ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText(muteIcon, VIEW_W - 22, 68);
   this.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
+};
+
+// ========== 关卡选择画面 ==========
+
+GameEngine.prototype._drawLevelSelectScreen = function(ctx) {
+  var grad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  grad.addColorStop(0, '#1a1a2e');
+  grad.addColorStop(0.5, '#16213e');
+  grad.addColorStop(1, '#0f3460');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  var cx = VIEW_W / 2;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  ctx.font = '60px sans-serif';
+  ctx.fillText('🐱', cx, 52);
+  ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('变身躲猫猫', cx, 100);
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText('Prop Hunt - 找出伪装的猫咪!', cx, 122);
+
+  var tipW = 280, tipH = 60, tipX = cx - tipW/2, tipY = 140;
+  draw.roundRect(ctx, tipX, tipY, tipW, tipH, 12, 'rgba(255,255,255,0.08)');
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ddd';
+  ctx.fillText('猫咪变成了房间里的物品', cx, tipY + 16);
+  ctx.fillText('观察可疑动静，点击找出所有猫咪', cx, tipY + 34);
+  ctx.fillText('小心！点错会扣一颗心 ❤️', cx, tipY + 52);
+
+  this.levelCards = [];
+  var ROOMS = scene.ROOMS;
+  var cardW = 105, cardH = 130, gap = 12;
+  var startY = tipY + tipH + 18;
+
+  var self = this;
+  ROOMS.forEach(function(room, idx) {
+    var row = Math.floor(idx / 3), col = idx % 3;
+    var rowCols = Math.min(3, ROOMS.length - row * 3);
+    var rowW = rowCols * cardW + (rowCols - 1) * gap;
+    var rx = cx - rowW / 2 + col * (cardW + gap);
+    var ry = startY + row * (cardH + gap);
+
+    var prog = self.levelProgress[room.id] || { unlocked: idx === 0, stars: 0 };
+
+    var cardBg = prog.unlocked ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)';
+    var borderCol = prog.unlocked ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)';
+    draw.roundRect(ctx, rx, ry, cardW, cardH, 14, cardBg);
+    ctx.strokeStyle = borderCol; ctx.lineWidth = 2;
+    draw.roundRect(ctx, rx, ry, cardW, cardH, 14, null, borderCol);
+
+    ctx.save();
+    if (!prog.unlocked) ctx.globalAlpha = 0.4;
+
+    var ccx = rx + cardW / 2;
+    if (prog.unlocked) {
+      ctx.font = '32px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(room.emoji, ccx, ry + 30);
+      ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText(room.name, ccx, ry + 58);
+      ctx.font = '11px sans-serif'; ctx.fillStyle = '#aaa';
+      ctx.fillText(room.desc, ccx, ry + 78);
+      ctx.font = '16px sans-serif';
+      var starStr = '';
+      for (var s = 0; s < 3; s++) starStr += s < prog.stars ? '⭐' : '☆';
+      ctx.fillText(starStr, ccx, ry + 102);
+    } else {
+      ctx.font = '24px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('🔒', ccx, ry + 38);
+      ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText(room.name, ccx, ry + 66);
+      ctx.font = '11px sans-serif'; ctx.fillStyle = '#aaa';
+      ctx.fillText('通关上一关解锁', ccx, ry + 86);
+    }
+    ctx.restore();
+
+    self.levelCards.push({ x: rx, y: ry, w: cardW, h: cardH, idx: idx, unlocked: prog.unlocked });
+  });
+
+  var btnY = startY + Math.ceil(ROOMS.length / 3) * (cardH + gap) + 8;
+  var btnW = 180, btnH = 36;
+  var abx = cx - btnW / 2;
+
+  draw.roundRect(ctx, abx, btnY, btnW, btnH, 20, 'rgba(255,215,0,0.15)');
+  ctx.strokeStyle = 'rgba(255,215,0,0.4)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, abx, btnY, btnW, btnH, 20, null, ctx.strokeStyle);
+  ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'center';
+  var aCount = 0;
+  for (var k in this.achievements) { if (this.achievements[k]) aCount++; }
+  ctx.fillText('🏆 成就 ' + aCount + '/' + ACHIEVEMENTS.length, cx, btnY + btnH / 2);
+  this.achieveBtnRect = { x: abx, y: btnY, w: btnW, h: btnH };
+
+  var cbY = btnY + btnH + 10;
+  draw.roundRect(ctx, abx, cbY, btnW, btnH, 20, 'rgba(100,200,255,0.12)');
+  ctx.strokeStyle = 'rgba(100,200,255,0.35)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, abx, cbY, btnW, btnH, 20, null, ctx.strokeStyle);
+  ctx.fillStyle = '#88ccff';
+  var cc = codexMod.getCount();
+  ctx.fillText('📖 图鉴 ' + cc.found + '/' + cc.total, cx, cbY + btnH / 2);
+  this.codexBtnRect = { x: abx, y: cbY, w: btnW, h: btnH };
+
+  if (this.subScreen === 'achieve') this._drawAchieveSubScreen(ctx);
+  if (this.subScreen === 'codex') this._drawCodexSubScreen(ctx);
+};
+
+GameEngine.prototype._drawAchieveSubScreen = function(ctx) {
+  ctx.fillStyle = 'rgba(0,0,0,0.70)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  var panelW = 340, panelH = 400;
+  var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
+  draw.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(15,15,30,0.95)');
+  ctx.strokeStyle = 'rgba(255,215,0,0.4)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, px, py, panelW, panelH, 16, null, ctx.strokeStyle);
+
+  ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('🏆 成就墙', px + 16, py + 24);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#999'; ctx.textAlign = 'right';
+  ctx.fillText('✕', px + panelW - 16, py + 24);
+  this.subCloseBtn = { x: px + panelW - 40, y: py + 8, w: 36, h: 32 };
+
+  var cols = 2, itemW = 148, itemH = 70, gapX = 10, gapY = 10;
+  var gridX = px + (panelW - cols * itemW - gapX) / 2;
+  var gridY = py + 50;
+  var self = this;
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ACHIEVEMENTS.forEach(function(a, i) {
+    var done = !!self.achievements[a.id];
+    var col = i % cols, row = Math.floor(i / cols);
+    var ix = gridX + col * (itemW + gapX);
+    var iy = gridY + row * (itemH + gapY);
+    ctx.save();
+    if (!done) ctx.globalAlpha = 0.4;
+    draw.roundRect(ctx, ix, iy, itemW, itemH, 10, done ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.05)');
+    var border = done ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.1)';
+    ctx.strokeStyle = border; ctx.lineWidth = 1;
+    draw.roundRect(ctx, ix, iy, itemW, itemH, 10, null, border);
+    var icx = ix + itemW / 2;
+    ctx.font = '22px sans-serif'; ctx.fillText(done ? a.icon : '🔒', icx, iy + 20);
+    ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(a.name, icx, iy + 42);
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa'; ctx.fillText(a.desc, icx, iy + 58);
+    ctx.restore();
+  });
+};
+
+GameEngine.prototype._drawCodexSubScreen = function(ctx) {
+  ctx.fillStyle = 'rgba(0,0,0,0.70)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  var panelW = 350, panelH = 440;
+  var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
+  draw.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(10,15,30,0.96)');
+  ctx.strokeStyle = 'rgba(100,200,255,0.4)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, px, py, panelW, panelH, 16, null, ctx.strokeStyle);
+
+  var cc = codexMod.getCount();
+  ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#88ccff';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('📖 猫咪图鉴 ' + cc.found + '/' + cc.total, px + 16, py + 24);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#999'; ctx.textAlign = 'right';
+  ctx.fillText('✕', px + panelW - 16, py + 24);
+  this.subCloseBtn = { x: px + panelW - 40, y: py + 8, w: 36, h: 32 };
+
+  var pct = cc.total > 0 ? Math.round(cc.found / cc.total * 100) : 0;
+  var barX = px + 16, barY = py + 44, barW = panelW - 32, barH = 16;
+  draw.roundRect(ctx, barX, barY, barW, barH, 8, 'rgba(255,255,255,0.1)');
+  if (pct > 0) draw.roundRect(ctx, barX, barY, barW * pct / 100, barH, 8, 'rgba(100,200,255,0.5)');
+  ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.fillText(pct + '%', barX + barW / 2, barY + barH / 2);
+
+  var curY = py + 72;
+  var CROOMS = codexMod.CODEX_ROOMS;
+  var codexData = codexMod.getData();
+  ctx.textBaseline = 'middle';
+
+  CROOMS.forEach(function(room) {
+    var roomFound = 0;
+    room.disguises.forEach(function(d) { if (codexData[d.id]) roomFound++; });
+    ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'left';
+    ctx.fillText(room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')', px + 16, curY);
+    curY += 18;
+
+    var itemW = 72, itemH = 48, gapX2 = 8, gridCols = 4;
+    var gridStartX = px + (panelW - gridCols * itemW - (gridCols - 1) * gapX2) / 2;
+
+    room.disguises.forEach(function(d, di) {
+      var col = di % gridCols, row = Math.floor(di / gridCols);
+      var ix = gridStartX + col * (itemW + gapX2);
+      var iy = curY + row * (itemH + 6);
+      var found = !!codexData[d.id];
+      ctx.save();
+      if (!found) ctx.globalAlpha = 0.35;
+      draw.roundRect(ctx, ix, iy, itemW, itemH, 8, found ? 'rgba(100,200,255,0.1)' : 'rgba(255,255,255,0.03)');
+      var bdr = found ? 'rgba(100,200,255,0.3)' : 'rgba(255,255,255,0.08)';
+      ctx.strokeStyle = bdr; ctx.lineWidth = 1;
+      draw.roundRect(ctx, ix, iy, itemW, itemH, 8, null, bdr);
+      ctx.textAlign = 'center';
+      ctx.font = '18px sans-serif'; ctx.fillText(found ? d.emoji : '❓', ix + itemW / 2, iy + 18);
+      ctx.font = '9px sans-serif'; ctx.fillStyle = found ? '#ccc' : '#666';
+      ctx.fillText(found ? d.name : '???', ix + itemW / 2, iy + 38);
+      ctx.restore();
+    });
+
+    var dRows = Math.ceil(room.disguises.length / gridCols);
+    curY += dRows * (itemH + 6) + 10;
+  });
+};
+
+GameEngine.prototype._handleLevelSelectTap = function(vx, vy) {
+  if (this.subScreen) {
+    if (this.subCloseBtn) {
+      var cb = this.subCloseBtn;
+      if (vx >= cb.x && vx <= cb.x+cb.w && vy >= cb.y && vy <= cb.y+cb.h) {
+        SFX.tap(); this.subScreen = null; return;
+      }
+    }
+    return;
+  }
+
+  for (var i = 0; i < this.levelCards.length; i++) {
+    var lc = this.levelCards[i];
+    if (vx >= lc.x && vx <= lc.x+lc.w && vy >= lc.y && vy <= lc.y+lc.h) {
+      if (lc.unlocked) {
+        SFX.tap(); this.startGame(lc.idx);
+      }
+      return;
+    }
+  }
+
+  if (this.achieveBtnRect) {
+    var ab = this.achieveBtnRect;
+    if (vx >= ab.x && vx <= ab.x+ab.w && vy >= ab.y && vy <= ab.y+ab.h) {
+      SFX.tap(); this.subScreen = 'achieve'; return;
+    }
+  }
+
+  if (this.codexBtnRect) {
+    var cb2 = this.codexBtnRect;
+    if (vx >= cb2.x && vx <= cb2.x+cb2.w && vy >= cb2.y && vy <= cb2.y+cb2.h) {
+      SFX.tap(); this.subScreen = 'codex'; return;
+    }
+  }
+};
+
+GameEngine.prototype._showLevelSelect = function() {
+  if (this.onShowLevelSelect) {
+    this.stop();
+    this.onShowLevelSelect();
+  } else {
+    this.state = 'ready';
+    this.subScreen = null;
+  }
+};
+
+GameEngine.prototype._drawPauseMenu = function(ctx) {
+  if (!this.paused) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.60)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  var cardW = 260, cardH = 260;
+  var cardX = (VIEW_W - cardW) / 2, cardY = (VIEW_H - cardH) / 2 - 20;
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, 'rgba(20,18,35,0.95)');
+  ctx.strokeStyle = 'rgba(255,215,0,0.3)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, null, ctx.strokeStyle);
+
+  var cx = VIEW_W / 2;
+  ctx.font = '30px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('⏸', cx, cardY + 38);
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('暂停', cx, cardY + 70);
+
+  var btnW = 200, btnH = 42, btnX = cx - btnW / 2;
+
+  var y1 = cardY + 105;
+  draw.roundRect(ctx, btnX, y1, btnW, btnH, 20, '#ffd700');
+  ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#1a1a2e';
+  ctx.fillText('▶ 继续游戏', cx, y1 + btnH / 2);
+  this.pauseResumeBtn = { x: btnX, y: y1, w: btnW, h: btnH };
+
+  var y2 = y1 + btnH + 12;
+  draw.roundRect(ctx, btnX, y2, btnW, btnH, 20, 'rgba(255,255,255,0.12)');
+  ctx.fillStyle = '#ddd';
+  ctx.fillText('↻ 重新开始', cx, y2 + btnH / 2);
+  this.pauseRetryBtn = { x: btnX, y: y2, w: btnW, h: btnH };
+
+  var y3 = y2 + btnH + 12;
+  draw.roundRect(ctx, btnX, y3, btnW, btnH, 20, 'rgba(255,255,255,0.12)');
+  ctx.fillStyle = '#bbb';
+  ctx.fillText('≡ 选择关卡', cx, y3 + btnH / 2);
+  this.pauseSelectBtn = { x: btnX, y: y3, w: btnW, h: btnH };
 };
 
 GameEngine.prototype._drawCombo = function(ctx) {
@@ -1537,7 +1859,7 @@ GameEngine.prototype._updateTutorial = function(dt) {
     if (cat && !cat.found) {
       cat.wobbleActive = false;
       cat.wobbleTimer = catSystem.randRange(cat.personality.wobbleCooldown);
-      cat.wobbleStrength = cat.personality.wobbleStrength;
+      cat.wobbleStrength = cat.personality.wobbleStrength * (scene.ROOMS[this.currentRoomIdx].wobbleStrengthMult || 1);
     }
   }
 };
@@ -1659,7 +1981,7 @@ GameEngine.prototype._handleTutorialTap = function(vx, vy) {
       if (cat && !cat.found) {
         cat.wobbleActive = false;
         cat.wobbleTimer = catSystem.randRange(cat.personality.wobbleCooldown);
-        cat.wobbleStrength = cat.personality.wobbleStrength;
+        cat.wobbleStrength = cat.personality.wobbleStrength * (scene.ROOMS[this.currentRoomIdx].wobbleStrengthMult || 1);
       }
       return true;
     }
@@ -1758,6 +2080,12 @@ GameEngine.prototype.handleTouchEnd = function(x, y) {
 };
 
 GameEngine.prototype._handleTap = function(vx, vy) {
+  // 关卡选择画面
+  if (this.state === 'ready') {
+    this._handleLevelSelectTap(vx, vy);
+    return;
+  }
+
   // 新手引导拦截（返回 true = 引导消费了这次点击）
   if (this.tutorial && this._handleTutorialTap(vx, vy)) return;
 
@@ -1778,12 +2106,44 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (this.selectBtn) {
       var sb = this.selectBtn;
       if (vx >= sb.x && vx <= sb.x+sb.w && vy >= sb.y && vy <= sb.y+sb.h) {
-        SFX.tap(); this.stop();
-        if (this.onShowLevelSelect) this.onShowLevelSelect();
+        SFX.tap(); this._showLevelSelect();
         return;
       }
     }
     return;
+  }
+
+  // 暂停菜单按钮
+  if (this.paused) {
+    if (this.pauseResumeBtn) {
+      var pr = this.pauseResumeBtn;
+      if (vx >= pr.x && vx <= pr.x+pr.w && vy >= pr.y && vy <= pr.y+pr.h) {
+        SFX.tap(); this.paused = false; return;
+      }
+    }
+    if (this.pauseRetryBtn) {
+      var pt = this.pauseRetryBtn;
+      if (vx >= pt.x && vx <= pt.x+pt.w && vy >= pt.y && vy <= pt.y+pt.h) {
+        SFX.tap(); this.paused = false; this.startGame(); return;
+      }
+    }
+    if (this.pauseSelectBtn) {
+      var ps = this.pauseSelectBtn;
+      if (vx >= ps.x && vx <= ps.x+ps.w && vy >= ps.y && vy <= ps.y+ps.h) {
+        SFX.tap(); this.paused = false;
+        this._showLevelSelect();
+        return;
+      }
+    }
+    return;
+  }
+
+  // 暂停按钮（游戏中）
+  if (this.pauseBtn && this.state === 'playing') {
+    var pb = this.pauseBtn;
+    if (vx >= pb.x && vx <= pb.x+pb.w && vy >= pb.y && vy <= pb.y+pb.h) {
+      SFX.tap(); this.paused = true; return;
+    }
   }
 
   // 音量按钮（任何游戏状态都可用）
