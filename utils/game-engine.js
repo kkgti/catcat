@@ -349,7 +349,7 @@ GameEngine.prototype._update = function() {
   if (this.state === 'found_anim') {
     this.animTimer -= dt;
     if (this.currentFoundCat) {
-      this.currentFoundCat.foundAnim = Math.min(1, 1 - this.animTimer/1.5);
+      this.currentFoundCat.foundAnim = Math.min(1, 1 - this.animTimer/2.0);
     }
     if (this.animTimer <= 0) {
       if (this.currentFoundCat) this.currentFoundCat.foundAnim = 1;
@@ -712,36 +712,125 @@ GameEngine.prototype._render = function() {
   ctx.restore();
 };
 
+// 弹性缓动
+function easeOutBack(t) {
+  var c = 1.7;
+  return 1 + (--t) * t * ((c + 1) * t + c);
+}
+
 GameEngine.prototype._drawFoundCat = function(ctx, cat) {
-  var p = cat.foundAnim;
+  var p = cat.foundAnim; // 0→1
   var cx = cat.x + cat.w/2, cy = cat.y + cat.h/2;
-  if (p < 0.4) {
-    var smokeP = p / 0.4;
-    ctx.save(); ctx.globalAlpha = 1 - smokeP;
-    for (var i = 0; i < 5; i++) {
-      var angle = (i/5)*Math.PI*2 + p*3;
-      var dist = smokeP * 30;
-      ctx.beginPath(); ctx.arc(cx + Math.cos(angle)*dist, cy + Math.sin(angle)*dist, 8+smokeP*10, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill();
-    }
-    ctx.restore();
-  }
-  if (p > 0.3) {
-    var catP = Math.min(1, (p - 0.3) / 0.5);
+  var itemScale = cat.scale || ITEM_SCALE;
+
+  // ── 阶段1: 伪装物品剧烈震颤 (0~0.2) ──
+  if (p < 0.2) {
+    var shakeP = p / 0.2;
+    var intensity = shakeP * 6;
+    var sx = Math.sin(p * 80) * intensity;
+    var sy = Math.cos(p * 60) * intensity * 0.5;
     ctx.save();
-    ctx.globalAlpha = catP;
-    var catSize = 40 * catP;
-    draw.drawCat(ctx, cx, cy, catSize, cat.color);
-    if (p > 0.5) {
-      var bubbleAlpha = Math.min(1, (p-0.5)/0.3);
-      ctx.globalAlpha = bubbleAlpha;
-      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      var tw = ctx.measureText(cat.quote).width;
-      draw.roundRect(ctx, cx - tw/2 - 10, cy - catSize - 30, tw + 20, 24, 8, 'rgba(0,0,0,0.75)');
-      ctx.fillStyle = '#ffd700'; ctx.fillText(cat.quote, cx, cy - catSize - 12);
+    ctx.translate(cat.baseX + sx, cat.baseY + sy);
+    ctx.scale(itemScale, itemScale);
+    cat.drawFn(ctx, -cat.origW/2, -cat.origH, cat.origW, cat.origH);
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = shakeP * 0.4; ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
+    for (var li = 0; li < 4; li++) {
+      var la = (li/4) * Math.PI * 2 + p * 20;
+      var ld = cat.w * 0.4 + shakeP * 8;
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(la)*ld, cy + Math.sin(la)*ld);
+      ctx.lineTo(cx + Math.cos(la)*(ld+6), cy + Math.sin(la)*(ld+6)); ctx.stroke();
     }
     ctx.restore();
+    return;
   }
+
+  // ── 阶段2: 缩小消失 + 烟雾爆发 (0.2~0.45) ──
+  if (p < 0.45) {
+    var shrinkP = (p - 0.2) / 0.25;
+    if (shrinkP < 0.6) {
+      var ss = 1 - shrinkP / 0.6;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(shrinkP * 0.5);
+      ctx.scale(itemScale * ss, itemScale * ss);
+      ctx.globalAlpha = ss;
+      cat.drawFn(ctx, -cat.origW/2, -cat.origH/2, cat.origW, cat.origH);
+      ctx.restore();
+    }
+    ctx.save();
+    var smokeAlpha = shrinkP < 0.5 ? shrinkP * 2 : 2 - shrinkP * 2;
+    ctx.globalAlpha = smokeAlpha * 0.7;
+    for (var si = 0; si < 8; si++) {
+      var sa = (si/8) * Math.PI * 2 + shrinkP * 2;
+      var sd = shrinkP * 40;
+      var sr = 5 + shrinkP * 12 - shrinkP * shrinkP * 8;
+      var colors = ['#ffd700','#ff9944','#ffcc66','#fff5cc','#ffaa88','#ffe066','#ffbb44','#fff'];
+      ctx.beginPath(); ctx.arc(cx + Math.cos(sa)*sd, cy + Math.sin(sa)*sd, sr, 0, Math.PI*2);
+      ctx.fillStyle = colors[si]; ctx.fill();
+    }
+    var flashR = 15 + shrinkP * 25;
+    var grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashR);
+    grd.addColorStop(0, 'rgba(255,255,255,' + (smokeAlpha * 0.8) + ')');
+    grd.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = grd; ctx.fillRect(cx - flashR, cy - flashR, flashR*2, flashR*2);
+    ctx.restore();
+    return;
+  }
+
+  // ── 阶段3: 猫咪弹性弹出 (0.45~0.7) ──
+  var catSize = 42;
+  if (p < 0.7) {
+    var popP = (p - 0.45) / 0.25;
+    var scale = easeOutBack(Math.min(1, popP));
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, popP * 2);
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    draw.drawCat(ctx, 0, 0, catSize, cat.color);
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = (1 - popP) * 0.6;
+    for (var ti = 0; ti < 6; ti++) {
+      var ta = (ti/6)*Math.PI*2 - popP*1.5;
+      var td = 20 + popP * 30;
+      ctx.font = (8 + popP*4) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('\u2726', cx + Math.cos(ta)*td, cy + Math.sin(ta)*td);
+    }
+    ctx.restore();
+    return;
+  }
+
+  // ── 阶段4: 猫咪微跳 + 庆祝 (0.7~0.85) ──
+  if (p < 0.85) {
+    var bounceP = (p - 0.7) / 0.15;
+    var bounce = Math.sin(bounceP * Math.PI) * 8;
+    ctx.save();
+    draw.drawCat(ctx, cx, cy - bounce, catSize, cat.color);
+    ctx.globalAlpha = 0.5 + Math.sin(bounceP * Math.PI) * 0.5;
+    ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    var decos = ['\u2665','\u2605','\u2665','\u2726'];
+    for (var di = 0; di < decos.length; di++) {
+      var da = (di/decos.length)*Math.PI*2 + bounceP*3;
+      var dd = 30 + Math.sin(bounceP*Math.PI)*10;
+      ctx.fillText(decos[di], cx + Math.cos(da)*dd, cy - bounce + Math.sin(da)*dd - 5);
+    }
+    ctx.restore();
+    return;
+  }
+
+  // ── 阶段5: 静止猫咪 + 语录气泡淡入 (0.85~1.0) ──
+  ctx.save();
+  draw.drawCat(ctx, cx, cy, catSize, cat.color);
+  var bubbleP = (p - 0.85) / 0.15;
+  ctx.globalAlpha = bubbleP;
+  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  var tw = ctx.measureText(cat.quote).width;
+  var bx = cx - tw/2 - 12, by = cy - catSize - 32, bw = tw + 24, bh = 28;
+  draw.roundRect(ctx, bx, by, bw, bh, 10, 'rgba(0,0,0,0.8)');
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.beginPath(); ctx.moveTo(cx - 5, by + bh); ctx.lineTo(cx + 5, by + bh); ctx.lineTo(cx, by + bh + 6); ctx.fill();
+  ctx.fillStyle = '#ffd700'; ctx.fillText(cat.quote, cx, by + bh - 7);
+  ctx.restore();
 };
 
 GameEngine.prototype._drawCatTail = function(ctx, cat, dx, dy) {
@@ -1395,10 +1484,10 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     hit.catRef.foundAnim = 0;
     this.foundCount++;
     this.currentFoundCat = hit.catRef;
-    this.animTimer = 1.5;
+    this.animTimer = 2.0;
     this.state = 'found_anim';
-    this.toast = '找到了【' + hit.catRef.personality.name + '】! ' + hit.catRef.quote;
-    this.toastTimer = 2.5;
+    this.toast = '找到了【' + hit.catRef.personality.name + '】!';
+    this.toastTimer = 2.0;
     this._lastFoundTime = 0;
     this.hintTimer = 0; this.hintCat = null;
     // 生成庆祝粒子
