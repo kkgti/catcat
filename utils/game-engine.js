@@ -1123,62 +1123,133 @@ GameEngine.prototype._drawToolBtn = function(ctx, x, y, size, icon, label, ready
 };
 
 GameEngine.prototype._drawEndScreen = function(ctx) {
-  ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.fillStyle = 'rgba(0,0,0,0.70)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   var room = scene.ROOMS[this.currentRoomIdx];
   var isWin = this.state === 'win';
   var stars = this._calcStars();
 
-  ctx.font = 'bold 32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = isWin ? '#ffd700' : '#ff6666';
-  ctx.fillText(isWin ? '全部找到!' : '游戏结束', VIEW_W/2, VIEW_H*0.28);
+  // ── 卡片容器 ──
+  var cardW = 320, cardH = isWin ? 420 : 360;
+  var cardX = (VIEW_W - cardW) / 2, cardY = (VIEW_H - cardH) / 2 - 10;
 
-  ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
-  ctx.fillText(room.emoji + ' ' + room.name, VIEW_W/2, VIEW_H*0.34);
+  // 卡片背景（深色磨砂 + 金色/红色边框）
+  ctx.save();
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, 'rgba(20,18,35,0.95)');
+  ctx.strokeStyle = isWin ? 'rgba(255,215,0,0.4)' : 'rgba(255,100,100,0.3)';
+  ctx.lineWidth = 2;
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, null, ctx.strokeStyle);
 
-  ctx.font = '18px sans-serif'; ctx.fillStyle = '#ddd';
-  ctx.fillText('找到 ' + this.foundCount + ' / ' + this.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.40);
+  var cx = VIEW_W / 2;
+
+  // ── 顶部装饰 ──
+  ctx.font = '40px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(isWin ? '🎉' : '😿', cx, cardY + 35);
+
+  // 标题
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = isWin ? '#ffd700' : '#ff7777';
+  ctx.fillText(isWin ? '全部找到!' : '游戏结束', cx, cardY + 70);
+
+  // 分隔线
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cardX + 30, cardY + 90); ctx.lineTo(cardX + cardW - 30, cardY + 90); ctx.stroke();
+
+  // ── 房间信息 ──
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#bbb';
+  ctx.fillText(room.emoji + ' ' + room.name, cx, cardY + 110);
+
+  // ── 统计信息（两列布局）──
+  var statY = cardY + 140;
+  var leftX = cardX + cardW * 0.30, rightX = cardX + cardW * 0.70;
+
+  // 找到数
+  ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText(this.foundCount + '/' + this.catCount, leftX, statY);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('猫咪', leftX, statY + 18);
+
   // 用时
   var mins = Math.floor(this.playTime / 60);
   var secs = Math.floor(this.playTime % 60);
-  ctx.font = '14px sans-serif'; ctx.fillStyle = '#999';
-  ctx.fillText('用时 ' + (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs, VIEW_W/2, VIEW_H*0.45);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#88ccff';
+  ctx.fillText(timeStr, rightX, statY);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('用时', rightX, statY + 18);
 
+  // 第二行统计
+  var stat2Y = statY + 48;
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ff8888';
+  ctx.fillText(this.mistakes.toString(), leftX, stat2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('失误', leftX, stat2Y + 16);
+
+  // 图鉴进度
+  var cc = codexMod.getCount();
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#88ddaa';
+  ctx.fillText(cc.found + '/' + cc.total, rightX, stat2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('图鉴', rightX, stat2Y + 16);
+
+  // ── 星级评价（仅胜利）──
   if (isWin) {
-    ctx.font = '36px sans-serif';
-    var starStr = '';
-    for (var i = 0; i < 3; i++) starStr += i < stars ? '⭐' : '☆';
-    ctx.fillText(starStr, VIEW_W/2, VIEW_H*0.48);
-
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#bbb';
-    var desc = stars === 3 ? '完美! 零失误!' : stars === 2 ? '很棒! 只错了1次' : '过关了! 但要更仔细哦';
-    ctx.fillText(desc, VIEW_W/2, VIEW_H*0.54);
+    var starY = stat2Y + 45;
+    var t = Date.now() / 1000;
+    ctx.font = '34px sans-serif';
+    for (var si = 0; si < 3; si++) {
+      var sx = cx - 40 + si * 40;
+      var bounce = si < stars ? Math.sin(t * 3 + si * 0.5) * 3 : 0;
+      ctx.fillText(si < stars ? '⭐' : '☆', sx, starY + bounce);
+    }
+    // 评语
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#ccc';
+    var desc = stars === 3 ? '完美通关! 零失误!' : stars === 2 ? '很棒! 就差一点点' : '通关了! 再接再厉';
+    ctx.fillText(desc, cx, starY + 28);
   }
+
+  // ── 底部品牌 ──
+  ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillText('变身躲猫猫 🐱', cx, cardY + cardH - 12);
+
+  ctx.restore();
+
+  // ── 按钮区域（卡片下方）──
+  var btnStartY = cardY + cardH + 12;
+  var btnW = 140, btnH = 38, btnGap = 10;
 
   // 重玩按钮
-  var btnY1 = VIEW_H * 0.60, btnW = 160, btnH = 42;
-  draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY1, btnW, btnH, 22, '#ffd700');
-  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#1a1a2e';
-  ctx.fillText('再来一局', VIEW_W/2, btnY1 + btnH/2);
-  this.retryBtn = { x: VIEW_W/2-btnW/2, y: btnY1, w: btnW, h: btnH };
+  draw.roundRect(ctx, cx - btnW - btnGap/2, btnStartY, btnW, btnH, 20, '#ffd700');
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#1a1a2e'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('再来一局', cx - btnW/2 - btnGap/2, btnStartY + btnH/2);
+  this.retryBtn = { x: cx - btnW - btnGap/2, y: btnStartY, w: btnW, h: btnH };
 
-  // 下一关
+  // 右侧按钮：下一关 or 选关
   if (isWin && this.currentRoomIdx < scene.ROOMS.length - 1) {
-    var btnY2 = VIEW_H * 0.69;
-    var nextRoom = scene.ROOMS[this.currentRoomIdx + 1];
-    draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY2, btnW, btnH, 22, '#66bbff');
+    draw.roundRect(ctx, cx + btnGap/2, btnStartY, btnW, btnH, 20, '#66bbff');
     ctx.fillStyle = '#1a1a2e';
-    ctx.fillText('下一关: ' + nextRoom.name, VIEW_W/2, btnY2 + btnH/2);
-    this.nextLevelBtn = { x: VIEW_W/2-btnW/2, y: btnY2, w: btnW, h: btnH };
+    ctx.fillText('下一关', cx + btnW/2 + btnGap/2, btnStartY + btnH/2);
+    this.nextLevelBtn = { x: cx + btnGap/2, y: btnStartY, w: btnW, h: btnH };
+
+    // 选关按钮（下方）
+    var btn3Y = btnStartY + btnH + 8;
+    draw.roundRect(ctx, cx - 70, btn3Y, 140, 34, 18, 'rgba(255,255,255,0.12)');
+    ctx.fillStyle = '#bbb'; ctx.font = '13px sans-serif';
+    ctx.fillText('选择关卡', cx, btn3Y + 17);
+    this.selectBtn = { x: cx - 70, y: btn3Y, w: 140, h: 34 };
   } else {
     this.nextLevelBtn = null;
+    draw.roundRect(ctx, cx + btnGap/2, btnStartY, btnW, btnH, 20, 'rgba(255,255,255,0.12)');
+    ctx.fillStyle = '#bbb';
+    ctx.fillText('选择关卡', cx + btnW/2 + btnGap/2, btnStartY + btnH/2);
+    this.selectBtn = { x: cx + btnGap/2, y: btnStartY, w: btnW, h: btnH };
   }
 
-  // 选关
-  var btnY3 = isWin && this.currentRoomIdx < scene.ROOMS.length - 1 ? VIEW_H * 0.78 : VIEW_H * 0.69;
-  draw.roundRect(ctx, VIEW_W/2-btnW/2, btnY3, btnW, btnH, 22, 'rgba(255,255,255,0.15)');
-  ctx.fillStyle = '#ddd';
-  ctx.fillText('选择关卡', VIEW_W/2, btnY3 + btnH/2);
-  this.selectBtn = { x: VIEW_W/2-btnW/2, y: btnY3, w: btnW, h: btnH };
+  // ── 截图提示（仅胜利）──
+  if (isWin) {
+    var saveY = this.currentRoomIdx < scene.ROOMS.length - 1 ? btnStartY + btnH + 50 : btnStartY + btnH + 12;
+    ctx.font = '12px sans-serif'; ctx.fillStyle = 'rgba(255,215,0,0.5)';
+    ctx.fillText('📷 长按截图分享成绩', cx, saveY);
+  }
 };
 
 // ========== 成就检查 & 渲染 ==========
