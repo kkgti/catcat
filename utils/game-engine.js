@@ -12,6 +12,18 @@ var VIEW_W = scene.VIEW_W;
 var VIEW_H = scene.VIEW_H;
 var ITEM_SCALE = scene.ITEM_SCALE;
 
+// ========== 表情系统常量 ==========
+var EXPRESSION_TYPES = [
+  { id: 'peek',    emoji: '\uD83D\uDC40', text: '',             desc: '偷偷看一眼' },
+  { id: 'yawn',    emoji: '\uD83E\uDD71', text: '',             desc: '打哈欠' },
+  { id: 'stretch', emoji: '\uD83D\uDC31', text: '~伸懒腰~',    desc: '伸懒腰' },
+  { id: 'sneeze',  emoji: '\uD83E\uDD27', text: 'ハクション!',  desc: '打喷嚏' },
+  { id: 'purr',    emoji: '\uD83D\uDE3A', text: '呼噜呼噜...',  desc: '发出呼噜声' },
+  { id: 'sleep',   emoji: '\uD83D\uDCA4', text: '',             desc: '打瞌睡' }
+];
+var EXPR_DURATION_BASE = [0.8, 1.5];
+var EXPR_INTERVAL_BASE = [8, 20];
+
 // ========== 成就定义 ==========
 var ACHIEVEMENTS = [
   { id: 'first_cat',    name: '初次接触',   icon: '🐾', desc: '找到第一只猫咪' },
@@ -23,6 +35,7 @@ var ACHIEVEMENTS = [
   { id: 'tool_user',    name: '工具达人',   icon: '🧰', desc: '同一局中使用两种道具' },
   { id: 'no_hint',      name: '火眼金睛',   icon: '👁️', desc: '不触发提示就通关' },
   { id: 'combo_king',   name: '连击之王',   icon: '🔥', desc: '单局达成4连击' },
+  { id: 'buddy_finder', name: '心有灵犀',   icon: '💞', desc: '5秒内找到一对搭档猫' },
 ];
 
 function GameEngine() {
@@ -75,6 +88,15 @@ function GameEngine() {
   this.catnipTimer = 0;
   this.catnipRadius = 200;
   this.toolBtns = [];
+  // 逗猫棒
+  this.featherCooldown = 0;
+  this.featherMaxCD = 25;
+  this.featherActive = false;
+  this.featherTimer = 0;
+  this.featherX = 0;
+  this.featherY = 0;
+  this.featherRadius = 180;
+  this._usedFeather = false;
   // 结算按钮
   this.retryBtn = null;
   this.nextLevelBtn = null;
@@ -248,7 +270,9 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.envEventCooldown = 10 + Math.random() * 8;
   this._usedLaser = false;
   this._usedCatnip = false;
+  this._usedFeather = false;
   this._hintTriggered = false;
+  this._initFeatherState();
   this.combo = 0; this.maxCombo = 0; this.comboTimer = 0; this.comboPopup = null;
   this.paused = false;
   this.timeOfDay = ['morning', 'afternoon', 'evening', 'night'][Math.floor(Math.random() * 4)];
@@ -320,6 +344,11 @@ GameEngine.prototype.startGame = function(roomIdx) {
     });
   });
 
+  // 初始化4大子系统
+  this._initRelocateCats();
+  this._initBuddyCats();
+  this._initExpressions();
+
   // 新手引导：第一次玩第一关时触发
   this.tutorial = null;
   if (this.currentRoomIdx === 0 && !this._hasTutorialDone()) {
@@ -387,6 +416,10 @@ GameEngine.prototype._update = function() {
     this._updateCatBehaviors(dt);
     this._updateFakeWobbles(dt);
     this._updateEnvEvent(dt);
+    this._updateExpressions(dt);
+    this._updateRelocateCats(dt);
+    this._updateBuddyAlert(dt);
+    this._updateFeatherEffect(dt);
   }
 
   // 新手引导
@@ -851,6 +884,12 @@ GameEngine.prototype._render = function() {
       return;
     }
 
+    // 正在转移的猫：使用特殊绘制
+    if (item.isCat && item.catRef.relocating) {
+      self._drawRelocatingCat(ctx, item.catRef);
+      return;
+    }
+
     var offsetX = 0, offsetY = 0;
     if (item.isCat && item.catRef.wobbleActive) {
       offsetX = Math.sin(item.catRef.wobbleElapsed * Math.PI * 8) * item.catRef.wobbleStrength;
@@ -906,6 +945,8 @@ GameEngine.prototype._render = function() {
       self._drawCatTail(ctx, item.catRef, catDrawX, catDrawY);
       self._drawCatBubble(ctx, item.catRef, catDrawX, catDrawY);
       self._drawCatEyes(ctx, item.catRef, catDrawX, catDrawY);
+      self._drawCatExpression(ctx, item.catRef, catDrawX, catDrawY);
+      self._drawBuddyAlert(ctx, item.catRef);
     }
   });
 
@@ -915,6 +956,8 @@ GameEngine.prototype._render = function() {
   if (this.laserActive) this._drawLaserEffect(ctx);
   // 猫薄荷
   if (this.catnipActive) this._drawCatnipEffect(ctx);
+  // 逗猫棒
+  if (this.featherActive) this._drawFeatherEffect(ctx);
   // 粒子
   this._drawParticles(ctx);
   // 环境事件
@@ -1853,6 +1896,9 @@ GameEngine.prototype._drawToolbar = function(ctx) {
   this._drawToolBtn(ctx, cx2, startY, btnSize, '🌿', '猫薄荷', catnipReady, catnipSelected,
     this.catnipCooldown > 0 ? Math.ceil(this.catnipCooldown) : 0);
   this.toolBtns.push({ x:cx2, y:startY, w:btnSize, h:btnSize, type:'catnip' });
+
+  // 逗猫棒按钮
+  this._drawFeatherToolBtn(ctx, startX, startY, btnSize, pad);
 };
 
 GameEngine.prototype._drawToolBtn = function(ctx, x, y, size, icon, label, ready, selected, cd) {
@@ -2676,6 +2722,12 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     }
   }
 
+  // 逗猫棒使用
+  if (this.activeTool === 'feather' && this.featherCooldown <= 0) {
+    this._handleFeatherActivation(vx, vy);
+    return;
+  }
+
   // 激光笔使用
   if (this.activeTool === 'laser' && this.laserCooldown <= 0) {
     this.laserActive = true;
@@ -2719,6 +2771,8 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (this.tutorial && this.tutorial.step <= 1) {
       this.tutorial.step = 2; this.tutorial.timer = 0;
     }
+    // 搭档猫系统
+    this._onBuddyCatFound(hit.catRef);
     // 图鉴收录
     var isNewCodex = codexMod.record(hit.catRef.disguiseId);
     if (isNewCodex) {
@@ -2787,7 +2841,1043 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
     this.catnipCooldown = this.catnipMaxCD;
     this.activeTool = null;
     this.toast = '猫薄荷散发香气... 观察附近的物品!'; this.toastTimer = 2.0;
+  } else if (type === 'feather') {
+    this._handleFeatherToolBtnClick();
   }
+};
+
+// =====================================================================
+// ========== 转移猫系统 (Relocating Cat) ==========
+// =====================================================================
+
+GameEngine.prototype._initRelocateCats = function() {
+  var self = this;
+  if (this.currentRoomIdx < 2) {
+    this.cats.forEach(function(cat) {
+      cat.canRelocate = false;
+      cat.hasRelocated = false;
+      cat.stareTimer = 0;
+      cat.relocating = false;
+      cat.relocateTimer = 0;
+      cat.relocatePhase = '';
+      cat.relocateAlpha = 1;
+      cat.relocateScale = 1;
+      cat.relocateOldX = 0;
+      cat.relocateOldY = 0;
+      cat.relocatePoofTimer = 0;
+      cat.relocateShimmerTimer = 0;
+    });
+    return;
+  }
+
+  var unfoundCats = this.cats.filter(function(c) { return !c.found; });
+  var count = Math.max(1, Math.round(unfoundCats.length * 0.3));
+
+  var shuffled = unfoundCats.slice();
+  for (var i = shuffled.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = tmp;
+  }
+
+  var selected = {};
+  for (var k = 0; k < count && k < shuffled.length; k++) {
+    selected[shuffled[k].id] = true;
+  }
+
+  this.cats.forEach(function(cat) {
+    cat.canRelocate = !!selected[cat.id];
+    cat.hasRelocated = false;
+    cat.stareTimer = 0;
+    cat.relocating = false;
+    cat.relocateTimer = 0;
+    cat.relocatePhase = '';
+    cat.relocateAlpha = 1;
+    cat.relocateScale = 1;
+    cat.relocateOldX = 0;
+    cat.relocateOldY = 0;
+    cat.relocatePoofTimer = 0;
+    cat.relocateShimmerTimer = 0;
+  });
+};
+
+GameEngine.prototype._updateRelocateCats = function(dt) {
+  if (!this.cats) return;
+  var self = this;
+
+  this.cats.forEach(function(cat) {
+    if (cat.found) return;
+
+    if (cat.relocating) {
+      cat.relocateTimer -= dt;
+      var remaining = cat.relocateTimer;
+
+      if (remaining > 0.4) {
+        cat.relocatePhase = 'fadeout';
+        var fadeOutProgress = 1 - (remaining - 0.4) / 0.4;
+        cat.relocateAlpha = 1 - fadeOutProgress;
+        cat.relocateScale = 1 - fadeOutProgress * 0.3;
+      } else if (remaining > 0) {
+        if (cat.relocatePhase === 'fadeout') {
+          self._performRelocation(cat);
+          cat.relocatePhase = 'fadein';
+        }
+        var fadeInProgress = 1 - remaining / 0.4;
+        cat.relocateAlpha = fadeInProgress;
+        cat.relocateScale = 0.7 + fadeInProgress * 0.3;
+      } else {
+        cat.relocating = false;
+        cat.relocatePhase = '';
+        cat.relocateAlpha = 1;
+        cat.relocateScale = 1;
+      }
+
+      if (cat.relocatePoofTimer > 0) cat.relocatePoofTimer -= dt;
+      if (cat.relocateShimmerTimer > 0) cat.relocateShimmerTimer -= dt;
+      return;
+    }
+
+    if (cat._warningTimer !== undefined && cat._warningTimer > 0) {
+      cat._warningTimer -= dt;
+      if (cat._warningTimer <= 0) {
+        cat.relocating = true;
+        cat.relocateTimer = 0.8;
+        cat.relocatePhase = 'fadeout';
+        cat.relocateAlpha = 1;
+        cat.relocateScale = 1;
+        cat.relocateOldX = cat.x + cat.w / 2;
+        cat.relocateOldY = cat.y + cat.h / 2;
+        cat.relocatePoofTimer = 0.6;
+        self.toast = '有只猫转移了！';
+        self.toastTimer = 2.0;
+      }
+      return;
+    }
+
+    if (!cat.canRelocate || cat.hasRelocated) return;
+
+    var catScreenX = cat.x;
+    var catScreenY = cat.y;
+    var catVisible = (
+      catScreenX + cat.w > 0 &&
+      catScreenX < VIEW_W &&
+      catScreenY + cat.h > 0 &&
+      catScreenY < VIEW_H
+    );
+
+    if (catVisible) {
+      cat.stareTimer += dt;
+    } else {
+      cat.stareTimer = 0;
+    }
+
+    if (cat.stareTimer >= 3.0) {
+      cat.stareTimer = 0;
+      cat.hasRelocated = true;
+      cat._warningTimer = 0.5;
+      cat._warningWobble = true;
+    }
+  });
+};
+
+GameEngine.prototype._performRelocation = function(cat) {
+  var self = this;
+  var candidates = this.allItems.filter(function(it) {
+    return !it.isCat && it.id !== cat.disguiseId;
+  });
+  if (candidates.length === 0) return;
+
+  var target = candidates[Math.floor(Math.random() * candidates.length)];
+
+  var catItem = null;
+  for (var i = 0; i < this.allItems.length; i++) {
+    if (this.allItems[i].isCat && this.allItems[i].catRef === cat) {
+      catItem = this.allItems[i];
+      break;
+    }
+  }
+  if (!catItem) return;
+
+  this._spawnRelocatePoof(cat.relocateOldX, cat.relocateOldY);
+
+  var oldTargetX = target.x, oldTargetY = target.y, oldTargetW = target.w, oldTargetH = target.h;
+  var oldTargetOrigW = target.origW, oldTargetOrigH = target.origH, oldTargetScale = target.scale;
+  var oldTargetBaseX = target.baseX, oldTargetBaseY = target.baseY, oldTargetDepth = target.depth;
+  var oldTargetDrawFn = target.drawFn, oldTargetName = target.name, oldTargetId = target.id;
+  var oldTargetZone = target.zone;
+
+  var oldCatX = catItem.x, oldCatY = catItem.y, oldCatW = catItem.w, oldCatH = catItem.h;
+  var oldCatOrigW = catItem.origW, oldCatOrigH = catItem.origH, oldCatScale = catItem.scale;
+  var oldCatBaseX = catItem.baseX, oldCatBaseY = catItem.baseY, oldCatDepth = catItem.depth;
+  var oldCatDrawFn = catItem.drawFn, oldCatName = catItem.name;
+
+  catItem.x = oldTargetX; catItem.y = oldTargetY; catItem.w = oldTargetW; catItem.h = oldTargetH;
+  catItem.origW = oldTargetOrigW; catItem.origH = oldTargetOrigH; catItem.scale = oldTargetScale;
+  catItem.baseX = oldTargetBaseX; catItem.baseY = oldTargetBaseY; catItem.depth = oldTargetDepth;
+  catItem.drawFn = oldTargetDrawFn; catItem.name = oldTargetName;
+
+  cat.x = oldTargetX; cat.y = oldTargetY; cat.w = oldTargetW; cat.h = oldTargetH;
+  cat.origW = oldTargetOrigW; cat.origH = oldTargetOrigH; cat.scale = oldTargetScale;
+  cat.baseX = oldTargetBaseX; cat.baseY = oldTargetBaseY; cat.depth = oldTargetDepth;
+  cat.drawFn = oldTargetDrawFn; cat.name = oldTargetName; cat.disguiseId = oldTargetId;
+
+  target.x = oldCatX; target.y = oldCatY; target.w = oldCatW; target.h = oldCatH;
+  target.origW = oldCatOrigW; target.origH = oldCatOrigH; target.scale = oldCatScale;
+  target.baseX = oldCatBaseX; target.baseY = oldCatBaseY; target.depth = oldCatDepth;
+  target.drawFn = oldCatDrawFn; target.name = oldCatName; target.zone = oldTargetZone;
+
+  cat.relocateShimmerTimer = 0.6;
+};
+
+GameEngine.prototype._drawRelocatingCat = function(ctx, cat) {
+  var catItem = null;
+  for (var i = 0; i < this.allItems.length; i++) {
+    if (this.allItems[i].isCat && this.allItems[i].catRef === cat) {
+      catItem = this.allItems[i];
+      break;
+    }
+  }
+  if (!catItem) return;
+
+  var itemScale = catItem.scale || 1.0;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, cat.relocateAlpha);
+  var scaleAdj = cat.relocateScale;
+  ctx.translate(catItem.baseX, catItem.baseY);
+  ctx.scale(itemScale * scaleAdj, itemScale * scaleAdj);
+  catItem.drawFn(ctx, -catItem.origW / 2, -catItem.origH, catItem.origW, catItem.origH);
+  ctx.restore();
+
+  if (cat.relocatePoofTimer > 0 && cat.relocatePhase === 'fadeout') {
+    this._drawPoof(ctx, cat.relocateOldX, cat.relocateOldY, cat.relocatePoofTimer / 0.6);
+  }
+  if (cat.relocateShimmerTimer > 0 && cat.relocatePhase === 'fadein') {
+    this._drawShimmer(ctx, catItem.baseX, catItem.baseY - catItem.h / 2, cat.relocateShimmerTimer / 0.6);
+  }
+};
+
+GameEngine.prototype._spawnRelocatePoof = function(cx, cy) {
+  if (!this.particles) return;
+  for (var i = 0; i < 8; i++) {
+    var angle = Math.random() * Math.PI * 2;
+    var speed = 20 + Math.random() * 40;
+    var life = 0.4 + Math.random() * 0.3;
+    this.particles.push({
+      type: 'poof',
+      x: cx + (Math.random() - 0.5) * 10,
+      y: cy + (Math.random() - 0.5) * 10,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 15,
+      life: life,
+      maxLife: life,
+      size: 4 + Math.random() * 6,
+      color: 'rgba(200,200,200,0.7)'
+    });
+  }
+};
+
+GameEngine.prototype._drawPoof = function(ctx, cx, cy, progress) {
+  var alpha = progress * 0.6;
+  var radius = 15 + (1 - progress) * 20;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  for (var i = 0; i < 5; i++) {
+    var angle = (i / 5) * Math.PI * 2 + progress * 2;
+    var dist = radius * (0.5 + Math.random() * 0.3);
+    var px = cx + Math.cos(angle) * dist;
+    var py = cy + Math.sin(angle) * dist;
+    var r = 6 + (1 - progress) * 8;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(180,180,180,' + (alpha * 0.5) + ')';
+    ctx.fill();
+  }
+  ctx.restore();
+};
+
+GameEngine.prototype._drawShimmer = function(ctx, cx, cy, progress) {
+  var alpha = progress * 0.5;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  for (var i = 0; i < 6; i++) {
+    var angle = (i / 6) * Math.PI * 2 + Date.now() / 200;
+    var len = 8 + (1 - progress) * 12;
+    var sx = cx + Math.cos(angle) * 4;
+    var sy = cy + Math.sin(angle) * 4;
+    var ex = cx + Math.cos(angle) * (4 + len);
+    var ey = cy + Math.sin(angle) * (4 + len);
+    ctx.strokeStyle = 'rgba(255,255,200,' + alpha + ')';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+  }
+  var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 12);
+  grad.addColorStop(0, 'rgba(255,255,220,' + (alpha * 0.8) + ')');
+  grad.addColorStop(1, 'rgba(255,255,220,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+};
+
+// =====================================================================
+// ========== 搭档猫系统 (Buddy Cat) ==========
+// =====================================================================
+
+GameEngine.prototype._initBuddyCats = function() {
+  this.cats.forEach(function(c) {
+    c.buddy = null;
+    c.buddyAlert = 0;
+    c.buddyAlertBubble = '';
+    c.buddyFoundTime = 0;
+    c._buddyLineAlpha = 0;
+    c._buddyLineFrom = null;
+  });
+
+  if (this.cats.length < 3) return;
+
+  var bestDist = Infinity;
+  var bestA = null;
+  var bestB = null;
+
+  for (var i = 0; i < this.cats.length; i++) {
+    for (var j = i + 1; j < this.cats.length; j++) {
+      var a = this.cats[i];
+      var b = this.cats[j];
+      var dx = (a.x + a.w / 2) - (b.x + b.w / 2);
+      var dy = (a.y + a.h / 2) - (b.y + b.h / 2);
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestA = a;
+        bestB = b;
+      }
+    }
+  }
+
+  if (bestDist <= 150 && bestA && bestB) {
+    bestA.buddy = bestB;
+    bestB.buddy = bestA;
+  }
+};
+
+GameEngine.prototype._onBuddyCatFound = function(cat) {
+  cat.buddyFoundTime = Date.now() / 1000;
+
+  if (!cat.buddy) return;
+
+  var buddy = cat.buddy;
+
+  if (buddy.found && buddy.buddyFoundTime > 0) {
+    var gap = Math.abs(cat.buddyFoundTime - buddy.buddyFoundTime);
+    if (gap <= 5) {
+      this.combo++;
+      if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+      this.comboTimer = this.comboWindow;
+      this.toast = '搭档默契！双倍积分!';
+      this.toastTimer = 2.5;
+
+      var cx = cat.x + cat.w / 2;
+      var cy = cat.y - 10;
+      this.comboPopup = { count: this.combo, timer: 1.5, x: cx, y: cy };
+
+      this._spawnParticles(cx, cy + 10, 1.5);
+      this._unlockAchievement('buddy_finder');
+    }
+    return;
+  }
+
+  if (!buddy.found) {
+    buddy.buddyAlert = 3.0;
+    buddy.buddyAlertBubble = '喵?! 同伴被发现了!';
+
+    buddy._buddyLineAlpha = 1.0;
+    buddy._buddyLineFrom = {
+      x: cat.x + cat.w / 2,
+      y: cat.y + cat.h / 2
+    };
+
+    buddy.wobbleActive = true;
+    buddy.wobbleElapsed = 0;
+    buddy.wobbleDuration = 3.0;
+    buddy.wobbleStrength = (buddy.personality.wobbleStrength || 3) * 2.5;
+  }
+};
+
+GameEngine.prototype._updateBuddyAlert = function(dt) {
+  var self = this;
+  this.cats.forEach(function(cat) {
+    if (cat.buddyAlert > 0) {
+      cat.buddyAlert -= dt;
+
+      if (cat._buddyLineAlpha > 0) {
+        cat._buddyLineAlpha -= dt / 2.0;
+        if (cat._buddyLineAlpha < 0) cat._buddyLineAlpha = 0;
+      }
+
+      if (cat.buddyAlert <= 0) {
+        cat.buddyAlert = 0;
+        cat.buddyAlertBubble = '';
+        cat._buddyLineAlpha = 0;
+        cat._buddyLineFrom = null;
+        var currentRoom = scene.ROOMS[self.currentRoomIdx];
+        cat.wobbleStrength = cat.personality.wobbleStrength *
+          ((currentRoom && currentRoom.wobbleStrengthMult) ? currentRoom.wobbleStrengthMult : 1);
+      }
+    }
+  });
+};
+
+GameEngine.prototype._drawBuddyAlert = function(ctx, cat) {
+  if (!cat.buddyAlert || cat.buddyAlert <= 0) return;
+  if (cat.found) return;
+
+  var cx = cat.x + cat.w / 2;
+  var cy = cat.y + cat.h / 2;
+  var t = Date.now() / 1000;
+
+  ctx.save();
+
+  var pulseAlpha = 0.5 + 0.5 * Math.sin(t * 6);
+  var alertRatio = Math.min(cat.buddyAlert / 3.0, 1.0);
+  ctx.strokeStyle = 'rgba(255, 200, 50, ' + (pulseAlpha * alertRatio).toFixed(2) + ')';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = 'rgba(255, 200, 50, 0.6)';
+  ctx.shadowBlur = 8;
+
+  var pad = 4;
+  var rx = cat.x - pad;
+  var ry = cat.y - pad;
+  var rw = cat.w + pad * 2;
+  var rh = cat.h + pad * 2;
+  var radius = 6;
+
+  ctx.beginPath();
+  ctx.moveTo(rx + radius, ry);
+  ctx.lineTo(rx + rw - radius, ry);
+  ctx.arcTo(rx + rw, ry, rx + rw, ry + radius, radius);
+  ctx.lineTo(rx + rw, ry + rh - radius);
+  ctx.arcTo(rx + rw, ry + rh, rx + rw - radius, ry + rh, radius);
+  ctx.lineTo(rx + radius, ry + rh);
+  ctx.arcTo(rx, ry + rh, rx, ry + rh - radius, radius);
+  ctx.lineTo(rx, ry + radius);
+  ctx.arcTo(rx, ry, rx + radius, ry, radius);
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+
+  if (cat._buddyLineFrom && cat._buddyLineAlpha > 0) {
+    var fromX = cat._buddyLineFrom.x;
+    var fromY = cat._buddyLineFrom.y;
+    ctx.strokeStyle = 'rgba(255, 200, 50, ' + (cat._buddyLineAlpha * 0.6).toFixed(2) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(cx, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  if (cat.buddyAlertBubble) {
+    var bubbleX = cx;
+    var bubbleY = cat.y - 24;
+    var fadeIn = Math.min((3.0 - cat.buddyAlert) / 0.3, 1.0);
+    var fadeOut = Math.min(cat.buddyAlert / 0.5, 1.0);
+    var bubbleAlpha = Math.min(fadeIn, fadeOut);
+
+    ctx.globalAlpha = bubbleAlpha;
+    ctx.font = 'bold 10px sans-serif';
+    var tw = ctx.measureText(cat.buddyAlertBubble).width;
+    var bw = tw + 14;
+    var bh = 20;
+    var bx = bubbleX - bw / 2;
+    var by = bubbleY - bh;
+
+    ctx.fillStyle = 'rgba(255, 230, 100, 0.92)';
+    ctx.beginPath();
+    ctx.moveTo(bx + 4, by);
+    ctx.lineTo(bx + bw - 4, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + 4, 4);
+    ctx.lineTo(bx + bw, by + bh - 4);
+    ctx.arcTo(bx + bw, by + bh, bx + bw - 4, by + bh, 4);
+    ctx.lineTo(bx + 4, by + bh);
+    ctx.arcTo(bx, by + bh, bx, by + bh - 4, 4);
+    ctx.lineTo(bx, by + 4);
+    ctx.arcTo(bx, by, bx + 4, by, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(bubbleX - 4, by + bh);
+    ctx.lineTo(bubbleX, by + bh + 6);
+    ctx.lineTo(bubbleX + 4, by + bh);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(200, 150, 0, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bx + 4, by);
+    ctx.lineTo(bx + bw - 4, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + 4, 4);
+    ctx.lineTo(bx + bw, by + bh - 4);
+    ctx.arcTo(bx + bw, by + bh, bx + bw - 4, by + bh, 4);
+    ctx.lineTo(bx + 4, by + bh);
+    ctx.arcTo(bx, by + bh, bx, by + bh - 4, 4);
+    ctx.lineTo(bx, by + 4);
+    ctx.arcTo(bx, by, bx + 4, by, 4);
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b4c00';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(cat.buddyAlertBubble, bubbleX, by + bh / 2);
+  }
+
+  ctx.restore();
+};
+
+// =====================================================================
+// ========== 逗猫棒系统 (Feather Wand) ==========
+// =====================================================================
+
+GameEngine.prototype._initFeatherState = function() {
+  this.featherCooldown = 0;
+  this.featherMaxCD = 25;
+  this.featherActive = false;
+  this.featherTimer = 0;
+  this.featherX = 0;
+  this.featherY = 0;
+  this.featherRadius = 180;
+  this._usedFeather = false;
+};
+
+GameEngine.prototype._drawFeatherToolBtn = function(ctx, startX, startY, btnSize, pad) {
+  var featherReady = this.featherCooldown <= 0 && !this.featherActive;
+  var featherSelected = this.activeTool === 'feather';
+  var fx = startX + (btnSize + pad) * 2;
+  this._drawToolBtn(ctx, fx, startY, btnSize, '\uD83E\uDEB6', '逗猫棒', featherReady, featherSelected,
+    this.featherCooldown > 0 ? Math.ceil(this.featherCooldown) : 0);
+  this.toolBtns.push({ x: fx, y: startY, w: btnSize, h: btnSize, type: 'feather' });
+};
+
+GameEngine.prototype._handleFeatherToolBtnClick = function() {
+  if (this.featherCooldown > 0 || this.featherActive) {
+    this.toast = '逗猫棒冷却中...'; this.toastTimer = 0.8;
+    return;
+  }
+  if (this.activeTool === 'feather') {
+    this.activeTool = null;
+  } else {
+    this.activeTool = 'feather';
+    this.toast = '点击房间中任意位置使用逗猫棒'; this.toastTimer = 1.5;
+  }
+};
+
+GameEngine.prototype._handleFeatherActivation = function(rx, ry) {
+  this.featherActive = true;
+  this._usedFeather = true;
+  SFX.toolUse();
+  this.featherX = rx;
+  this.featherY = ry;
+  this.featherTimer = 2.5;
+  this.featherCooldown = this.featherMaxCD;
+  this.activeTool = null;
+
+  var affected = 0;
+  var self = this;
+  var currentRoom = scene.ROOMS[this.currentRoomIdx];
+  this.cats.forEach(function(cat) {
+    if (cat.found) return;
+    var dx = (cat.x + cat.w / 2) - rx;
+    var dy = (cat.y + cat.h / 2) - ry;
+    if (Math.sqrt(dx * dx + dy * dy) < self.featherRadius) {
+      cat.featherForced = 2.5;
+      cat.wobbleActive = true;
+      cat.wobbleElapsed = 0;
+      cat.wobbleDuration = 2.5;
+      cat.wobbleStrength = (cat.personality.wobbleStrength *
+        (currentRoom.wobbleStrengthMult || 1)) * 2;
+      affected++;
+    }
+  });
+
+  if (affected > 0) {
+    this.toast = '逗猫棒激活! 附近的猫咪忍不住动了!'; this.toastTimer = 2.0;
+  } else {
+    this.toast = '逗猫棒激活! 但附近似乎没有猫...'; this.toastTimer = 1.5;
+  }
+};
+
+GameEngine.prototype._updateFeatherEffect = function(dt) {
+  if (this.featherCooldown > 0) this.featherCooldown -= dt;
+
+  if (this.featherActive) {
+    this.featherTimer -= dt;
+    if (this.featherTimer <= 0) {
+      this.featherActive = false;
+    }
+  }
+
+  var self = this;
+  var currentRoom = scene.ROOMS[this.currentRoomIdx];
+  this.cats.forEach(function(cat) {
+    if (cat.found) return;
+    if (cat.featherForced && cat.featherForced > 0) {
+      cat.featherForced -= dt;
+      if (cat.featherForced > 0) {
+        cat.wobbleActive = true;
+        cat.wobbleDuration = cat.featherForced + 0.1;
+        cat.wobbleStrength = (cat.personality.wobbleStrength *
+          (currentRoom.wobbleStrengthMult || 1)) * 2;
+      } else {
+        cat.featherForced = 0;
+        cat.wobbleActive = false;
+        cat.wobbleTimer = catSystem.randRange(cat.personality.wobbleCooldown);
+        cat.wobbleStrength = cat.personality.wobbleStrength *
+          (currentRoom.wobbleStrengthMult || 1);
+      }
+    }
+  });
+};
+
+GameEngine.prototype._drawFeatherEffect = function(ctx) {
+  var totalDuration = 2.5;
+  var elapsed = totalDuration - this.featherTimer;
+  var expandDuration = 0.5;
+
+  var radiusProgress = Math.min(elapsed / expandDuration, 1.0);
+  var currentRadius = this.featherRadius * radiusProgress;
+
+  var alpha;
+  if (elapsed < 0.15) {
+    alpha = elapsed / 0.15 * 0.7;
+  } else if (this.featherTimer < 0.5) {
+    alpha = (this.featherTimer / 0.5) * 0.7;
+  } else {
+    alpha = 0.7;
+  }
+
+  var t = Date.now() / 1000;
+  var cx = this.featherX;
+  var cy = this.featherY;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  var ringColors = ['rgba(255,165,0,0.5)', 'rgba(255,191,64,0.4)', 'rgba(255,215,100,0.3)'];
+  for (var r = 0; r < 3; r++) {
+    var ringRadius = currentRadius * (0.4 + r * 0.3);
+    ringRadius += Math.sin(t * 4 + r * 2) * 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(0, ringRadius), 0, Math.PI * 2);
+    ctx.strokeStyle = ringColors[r];
+    ctx.lineWidth = 2.5 - r * 0.5;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.globalAlpha = alpha;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(t * 2);
+  var bobY = Math.sin(t * 3) * 5;
+  ctx.font = '24px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('\uD83E\uDEB6', 0, bobY);
+  ctx.restore();
+
+  var sparkleCount = 12;
+  for (var i = 0; i < sparkleCount; i++) {
+    var seed = i * 137.508;
+    var angle = (seed + t * (0.8 + (i % 3) * 0.3)) % (Math.PI * 2);
+    var dist = currentRadius * (0.15 + ((i * 0.618) % 1) * 0.75);
+
+    var sx = cx + Math.cos(angle) * dist;
+    var sy = cy + Math.sin(angle) * dist;
+
+    var twinkle = 0.3 + 0.7 * Math.abs(Math.sin(t * 5 + i * 1.2));
+    ctx.globalAlpha = alpha * twinkle * 0.8;
+
+    var sparkSize = 2 + Math.sin(t * 3 + i) * 1;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - sparkSize);
+    ctx.lineTo(sx + sparkSize * 0.4, sy);
+    ctx.lineTo(sx, sy + sparkSize);
+    ctx.lineTo(sx - sparkSize * 0.4, sy);
+    ctx.closePath();
+    ctx.fillStyle = '#ffcc33';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(sx - sparkSize, sy);
+    ctx.lineTo(sx, sy + sparkSize * 0.4);
+    ctx.lineTo(sx + sparkSize, sy);
+    ctx.lineTo(sx, sy - sparkSize * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = '#ffe080';
+    ctx.fill();
+  }
+
+  for (var j = 0; j < 6; j++) {
+    var trailAngle = (j / 6) * Math.PI * 2 + t * 1.5;
+    var trailDist = currentRadius * 0.9 + Math.sin(t * 2 + j * 3) * 8;
+    var tx = cx + Math.cos(trailAngle) * trailDist;
+    var ty = cy + Math.sin(trailAngle) * trailDist;
+    var trailAlpha = alpha * (0.3 + 0.3 * Math.sin(t * 4 + j));
+    ctx.globalAlpha = trailAlpha;
+    ctx.beginPath();
+    ctx.arc(tx, ty, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffaa22';
+    ctx.fill();
+  }
+
+  ctx.restore();
+};
+
+// =====================================================================
+// ========== 表情系统 (Cat Expression) ==========
+// =====================================================================
+
+GameEngine.prototype._initExpressions = function() {
+  var mult = 1.0;
+  if (this.currentRoomIdx !== undefined) {
+    mult = scene.ROOMS[this.currentRoomIdx].behaviorMult || 1.0;
+  }
+  var self = this;
+  this.cats.forEach(function(cat) {
+    cat.expressionTimer = self._exprRandInterval(mult);
+    cat.activeExpression = null;
+    cat.exprParticles = [];
+  });
+};
+
+GameEngine.prototype._updateExpressions = function(dt) {
+  var mult = 1.0;
+  if (this.currentRoomIdx !== undefined) {
+    mult = scene.ROOMS[this.currentRoomIdx].behaviorMult || 1.0;
+  }
+  var self = this;
+
+  this.cats.forEach(function(cat) {
+    if (cat.found) return;
+
+    self._updateExprParticles(cat, dt);
+
+    if (cat.activeExpression) {
+      cat.activeExpression.timer += dt;
+      if (cat.activeExpression.timer >= cat.activeExpression.maxTimer) {
+        cat.activeExpression = null;
+        cat.expressionTimer = self._exprRandInterval(mult);
+      }
+      return;
+    }
+
+    if (cat.expressionTimer === undefined || cat.expressionTimer === null) {
+      cat.expressionTimer = self._exprRandInterval(mult);
+    }
+    cat.expressionTimer -= dt;
+    if (cat.expressionTimer <= 0) {
+      var isBusy = cat.wobbleActive || cat.tailActive || cat.bubbleActive || cat.eyeActive;
+      if (isBusy) {
+        cat.expressionTimer = 1 + Math.random() * 2;
+        return;
+      }
+      var exprType = EXPRESSION_TYPES[Math.floor(Math.random() * EXPRESSION_TYPES.length)];
+      var durationScale = 1.0 / Math.max(mult, 0.5);
+      var dur = EXPR_DURATION_BASE[0] + Math.random() * (EXPR_DURATION_BASE[1] - EXPR_DURATION_BASE[0]);
+      dur = dur * durationScale;
+      dur = Math.max(dur, 0.4);
+
+      cat.activeExpression = {
+        type: exprType,
+        timer: 0,
+        maxTimer: dur
+      };
+
+      if (exprType.id === 'sneeze') {
+        self._spawnSneezeParticles(cat);
+      }
+    }
+  });
+};
+
+GameEngine.prototype._drawCatExpression = function(ctx, cat, itemX, itemY) {
+  if (!cat || cat.found || !cat.activeExpression) {
+    if (cat && cat.exprParticles && cat.exprParticles.length > 0) {
+      this._drawExprParticles(ctx, cat, itemX, itemY);
+    }
+    return;
+  }
+
+  var expr = cat.activeExpression;
+  var t = expr.timer / expr.maxTimer;
+  var type = expr.type;
+
+  ctx.save();
+
+  switch (type.id) {
+    case 'peek':
+      this._drawExprPeek(ctx, cat, itemX, itemY, t);
+      break;
+    case 'yawn':
+      this._drawExprYawn(ctx, cat, itemX, itemY, t, expr);
+      break;
+    case 'stretch':
+      this._drawExprStretchLabel(ctx, cat, itemX, itemY, t);
+      break;
+    case 'sneeze':
+      this._drawExprSneeze(ctx, cat, itemX, itemY, t);
+      break;
+    case 'purr':
+      this._drawExprPurr(ctx, cat, itemX, itemY, t, expr);
+      break;
+    case 'sleep':
+      this._drawExprSleep(ctx, cat, itemX, itemY, t, expr);
+      break;
+  }
+
+  ctx.restore();
+  this._drawExprParticles(ctx, cat, itemX, itemY);
+};
+
+GameEngine.prototype._getCatExpressionScale = function(cat) {
+  var result = { x: 1.0, y: 1.0 };
+  if (!cat || !cat.activeExpression) return result;
+
+  var expr = cat.activeExpression;
+  var t = expr.timer / expr.maxTimer;
+  var type = expr.type;
+
+  if (type.id === 'yawn') {
+    var yawnT = Math.sin(t * Math.PI);
+    result.y = 1.0 + yawnT * 0.05;
+  } else if (type.id === 'stretch') {
+    var stretchT = Math.sin(t * Math.PI);
+    result.x = 1.0 + stretchT * 0.08;
+  } else if (type.id === 'sneeze') {
+    if (t < 0.2) {
+      var shakeT = t / 0.2;
+      result.x = 1.0 + Math.sin(shakeT * Math.PI * 6) * 0.03 * (1 - shakeT);
+    }
+  }
+
+  return result;
+};
+
+// --- Expression draw helpers ---
+
+GameEngine.prototype._drawExprPeek = function(ctx, cat, ix, iy, t) {
+  var alpha;
+  if (t < 0.2) {
+    alpha = t / 0.2;
+  } else if (t > 0.6) {
+    alpha = (1 - t) / 0.4;
+  } else {
+    alpha = 1.0;
+  }
+  alpha = Math.max(0, Math.min(alpha, 1)) * 0.55;
+
+  ctx.globalAlpha = alpha;
+
+  var cx = ix + cat.w * 0.5;
+  var cy = iy - 2;
+  var peekOffset = -Math.sin(t * Math.PI) * 4;
+
+  var eyeSpacing = cat.w * 0.12;
+  eyeSpacing = Math.max(eyeSpacing, 5);
+  eyeSpacing = Math.min(eyeSpacing, 10);
+  var eyeR = 2.5;
+
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(cx - eyeSpacing, cy + peekOffset, eyeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + eyeSpacing, cy + peekOffset, eyeR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(cx - eyeSpacing + 0.8, cy + peekOffset - 0.8, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + eyeSpacing + 0.8, cy + peekOffset - 0.8, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+};
+
+GameEngine.prototype._drawExprYawn = function(ctx, cat, ix, iy, t, expr) {
+  var alpha;
+  if (t < 0.15) {
+    alpha = t / 0.15;
+  } else if (t > 0.7) {
+    alpha = (1 - t) / 0.3;
+  } else {
+    alpha = 1.0;
+  }
+  alpha = Math.max(0, Math.min(alpha, 1)) * 0.6;
+
+  ctx.globalAlpha = alpha;
+  var cx = ix + cat.w * 0.5;
+  var floatY = iy - 6 - t * 18;
+
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('\uD83E\uDD71', cx, floatY);
+};
+
+GameEngine.prototype._drawExprStretchLabel = function(ctx, cat, ix, iy, t) {
+  var alpha;
+  if (t < 0.2) {
+    alpha = t / 0.2;
+  } else if (t > 0.7) {
+    alpha = (1 - t) / 0.3;
+  } else {
+    alpha = 1.0;
+  }
+  alpha = Math.max(0, Math.min(alpha, 1)) * 0.35;
+
+  ctx.globalAlpha = alpha;
+  var cx = ix + cat.w * 0.5;
+  var cy = iy - 4;
+
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = '#a0522d';
+  ctx.fillText('~伸懒腰~', cx, cy);
+};
+
+GameEngine.prototype._drawExprSneeze = function(ctx, cat, ix, iy, t) {
+  if (t < 0.35) {
+    var alpha = t < 0.1 ? t / 0.1 : (0.35 - t) / 0.25;
+    alpha = Math.max(0, Math.min(alpha, 1)) * 0.7;
+    ctx.globalAlpha = alpha;
+
+    var cx = ix + cat.w * 0.5;
+    var shake = 0;
+    if (t < 0.2) {
+      shake = Math.sin(t * 120) * 3 * (1 - t / 0.2);
+    }
+    var cy = iy - 8;
+
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('\uD83E\uDD27', cx + shake, cy);
+  }
+};
+
+GameEngine.prototype._drawExprPurr = function(ctx, cat, ix, iy, t, expr) {
+  var notes = ['\u266A', '\u266B'];
+  var noteCount = 3;
+
+  for (var i = 0; i < noteCount; i++) {
+    var noteT = t - i * 0.15;
+    if (noteT < 0 || noteT > 0.8) continue;
+
+    var alpha = noteT < 0.15 ? noteT / 0.15 : noteT > 0.6 ? (0.8 - noteT) / 0.2 : 1.0;
+    alpha = Math.max(0, Math.min(alpha, 1)) * 0.45;
+
+    ctx.globalAlpha = alpha;
+
+    var cx = ix + cat.w * 0.5 + (i - 1) * 8;
+    var floatY = iy - 5 - noteT * 25;
+    var waveX = Math.sin(noteT * Math.PI * 3 + i * 1.5) * 5;
+
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#d4a574';
+    ctx.fillText(notes[i % notes.length], cx + waveX, floatY);
+  }
+};
+
+GameEngine.prototype._drawExprSleep = function(ctx, cat, ix, iy, t, expr) {
+  var zzCount = 3;
+
+  for (var i = 0; i < zzCount; i++) {
+    var zzT = t - i * 0.2;
+    if (zzT < 0 || zzT > 0.7) continue;
+
+    var alpha = zzT < 0.1 ? zzT / 0.1 : zzT > 0.5 ? (0.7 - zzT) / 0.2 : 1.0;
+    alpha = Math.max(0, Math.min(alpha, 1)) * 0.5;
+
+    ctx.globalAlpha = alpha;
+
+    var baseX = ix + cat.w * 0.6 + i * 5;
+    var floatY = iy - 2 - zzT * 30;
+    var fontSize = 8 + i * 2 + zzT * 4;
+
+    ctx.font = 'bold ' + Math.round(fontSize) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = 'rgba(100, 140, 200, ' + alpha + ')';
+    ctx.fillText('Z', baseX, floatY);
+  }
+};
+
+// --- Expression particles ---
+
+GameEngine.prototype._spawnSneezeParticles = function(cat) {
+  if (!cat.exprParticles) cat.exprParticles = [];
+  for (var i = 0; i < 5; i++) {
+    cat.exprParticles.push({
+      ox: (Math.random() - 0.5) * cat.w * 0.6,
+      oy: -cat.h * 0.3 * Math.random(),
+      vx: (Math.random() - 0.5) * 40,
+      vy: -10 - Math.random() * 20,
+      life: 0.5 + Math.random() * 0.4,
+      maxLife: 0.5 + Math.random() * 0.4,
+      size: 1.5 + Math.random() * 1.5,
+      color: 'rgba(255,255,255,'
+    });
+  }
+};
+
+GameEngine.prototype._updateExprParticles = function(cat, dt) {
+  if (!cat.exprParticles || cat.exprParticles.length === 0) return;
+  for (var i = cat.exprParticles.length - 1; i >= 0; i--) {
+    var p = cat.exprParticles[i];
+    p.ox += p.vx * dt;
+    p.oy += p.vy * dt;
+    p.vy += 30 * dt;
+    p.life -= dt;
+    if (p.life <= 0) {
+      cat.exprParticles.splice(i, 1);
+    }
+  }
+};
+
+GameEngine.prototype._drawExprParticles = function(ctx, cat, ix, iy) {
+  if (!cat.exprParticles || cat.exprParticles.length === 0) return;
+  var cx = ix + cat.w * 0.5;
+  var cy = iy + cat.h * 0.5;
+
+  ctx.save();
+  for (var i = 0; i < cat.exprParticles.length; i++) {
+    var p = cat.exprParticles[i];
+    var alpha = Math.max(0, p.life / p.maxLife) * 0.6;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(255,255,255,' + alpha + ')';
+    ctx.beginPath();
+    ctx.arc(cx + p.ox, cy + p.oy, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+};
+
+GameEngine.prototype._exprRandInterval = function(mult) {
+  var base = EXPR_INTERVAL_BASE[0] + Math.random() * (EXPR_INTERVAL_BASE[1] - EXPR_INTERVAL_BASE[0]);
+  return base * Math.max(mult, 0.5);
 };
 
 GameEngine.ACHIEVEMENTS = ACHIEVEMENTS;
