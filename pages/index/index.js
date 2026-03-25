@@ -1,5 +1,6 @@
 var scene = require('../../utils/scene');
 var GameEngine = require('../../utils/game-engine');
+var codexMod = require('../../utils/codex');
 
 Page({
   data: {
@@ -7,16 +8,23 @@ Page({
     achievements: [],
     achieveCount: 0,
     showAchievements: false,
+    showCodex: false,
+    codexRooms: [],
+    codexFound: 0,
+    codexTotal: 0,
+    codexPct: 0,
   },
 
   onLoad: function() {
     this._buildRoomList();
     this._buildAchievements();
+    this._buildCodex();
   },
 
   onShow: function() {
     this._buildRoomList();
     this._buildAchievements();
+    this._buildCodex();
   },
 
   _buildRoomList: function() {
@@ -92,5 +100,33 @@ Page({
 
   onToggleAchievements: function() {
     this.setData({ showAchievements: !this.data.showAchievements });
+  },
+
+  _buildCodex: function() {
+    var data = codexMod.getData();
+    var cc = codexMod.getCount();
+    var rooms = [];
+    codexMod.CODEX_ROOMS.forEach(function(room) {
+      var items = [];
+      var roomFound = 0;
+      room.disguises.forEach(function(d) {
+        var found = !!data[d.id];
+        if (found) roomFound++;
+        items.push({ id: d.id, name: d.name, found: found });
+      });
+      rooms.push({
+        id: room.id, name: room.name, emoji: room.emoji,
+        items: items, found: roomFound, total: room.disguises.length,
+      });
+    });
+    var pct = cc.total > 0 ? Math.round(cc.found / cc.total * 100) : 0;
+    this.setData({
+      codexRooms: rooms, codexFound: cc.found,
+      codexTotal: cc.total, codexPct: pct,
+    });
+  },
+
+  onToggleCodex: function() {
+    this.setData({ showCodex: !this.data.showCodex });
   },
 });

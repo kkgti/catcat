@@ -36,6 +36,39 @@
     </view>
   </view>
 
+  <!-- 图鉴按钮 -->
+  <view class="codex-toggle" bindtap="onToggleCodex">
+    <text class="codex-toggle-icon">📖</text>
+    <text class="codex-toggle-text">图鉴 {{codexFound}}/{{codexTotal}}</text>
+  </view>
+
+  <!-- 图鉴面板 -->
+  <view class="codex-panel" tt:if="{{showCodex}}">
+    <view class="codex-header">
+      <text class="codex-title">📖 猫咪图鉴 {{codexFound}}/{{codexTotal}}</text>
+      <text class="codex-close" bindtap="onToggleCodex">✕</text>
+    </view>
+    <view class="codex-room" tt:for="{{codexRooms}}" tt:key="id">
+      <text class="codex-room-title">{{item.emoji}} {{item.name}} ({{item.found}}/{{item.total}})</text>
+      <view class="codex-grid">
+        <view
+          class="codex-card {{entry.found ? 'found' : 'locked'}}"
+          tt:for="{{item.items}}"
+          tt:for-item="entry"
+          tt:key="id"
+        >
+          <text class="codex-icon">{{entry.found ? '🐱' : '❓'}}</text>
+          <text class="codex-name">{{entry.found ? entry.name : '???'}}</text>
+        </view>
+      </view>
+    </view>
+    <!-- 进度条 -->
+    <view class="codex-progress">
+      <view class="codex-bar" style="width:{{codexPct}}%"></view>
+      <text class="codex-pct">{{codexPct}}%</text>
+    </view>
+  </view>
+
   <view class="level-list">
     <view
       class="level-card {{item.unlocked ? '' : 'locked'}}"

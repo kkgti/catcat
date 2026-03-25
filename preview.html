@@ -1683,6 +1683,44 @@ function drawAchievePopup(ctx) {
 
 loadAchievements();
 
+// ==================== 猫咪图鉴 ====================
+// 构建所有伪装列表（按房间分组）
+var CODEX_ROOMS = [
+  { id:'livingroom', name:'客厅', emoji:'🛋️', disguises: CAT_DISGUISE_TEMPLATES },
+  { id:'kitchen',    name:'厨房', emoji:'🍳', disguises: KITCHEN_DISGUISES },
+  { id:'bedroom',    name:'卧室', emoji:'🛏️', disguises: BEDROOM_DISGUISES },
+  { id:'bathroom',   name:'浴室', emoji:'🛁', disguises: BATHROOM_DISGUISES },
+  { id:'study',      name:'书房', emoji:'📚', disguises: STUDY_DISGUISES },
+];
+
+var codex = {}; // { disguiseId: true }
+
+function loadCodex() {
+  try {
+    var data = localStorage.getItem('catHideCodex');
+    if (data) codex = JSON.parse(data);
+  } catch(e) {}
+}
+
+function saveCodex() {
+  try { localStorage.setItem('catHideCodex', JSON.stringify(codex)); } catch(e) {}
+}
+
+function recordCodex(disguiseId) {
+  if (codex[disguiseId]) return false; // 已收录
+  codex[disguiseId] = true;
+  saveCodex();
+  return true; // 新收录
+}
+
+function getCodexCount() {
+  var total = 0;
+  CODEX_ROOMS.forEach(function(r){ total += r.disguises.length; });
+  return { found: Object.keys(codex).length, total: total };
+}
+
+loadCodex();
+
 // ==================== 初始化 ====================
 function initGame(roomIdx) {
   if (roomIdx !== undefined) game.currentRoomIdx = roomIdx;
@@ -1734,7 +1772,7 @@ function initGame(roomIdx) {
       x: cp.x, y: cp.y, w: cp.w, h: cp.h,
       origW: cp.origW, origH: cp.origH, scale: cp.scale,
       baseX: cp.baseX, baseY: cp.baseY, depth: cp.depth,
-      drawFn: cp.draw, name: cp.name,
+      drawFn: cp.draw, name: cp.name, disguiseId: tmpl.id,
       quote: pickQuote(usedQuotes, room.id),
       color: personality.color,
       personality: personality,
@@ -3439,6 +3477,11 @@ function handleTap(vx, vy) {
     if (game.tutorial && game.tutorial.step <= 1) {
       game.tutorial.step = 2; game.tutorial.timer = 0;
     }
+    // 图鉴收录
+    var isNewCodex = recordCodex(hit.catRef.disguiseId);
+    if (isNewCodex) {
+      game.toast = '📖 新图鉴! 找到了【' + hit.catRef.personality.name + '】!';
+    }
     // 成就：初次接触 + 累计猫数
     game.totalCatsFound++;
     unlockAchievement('first_cat');
@@ -3524,6 +3567,14 @@ function renderLevelSelect() {
   achieveBtn.textContent = '🏆 成就 ' + count + '/' + ACHIEVEMENTS.length;
   achieveBtn.addEventListener('click', function() { showAchievementPanel(); });
   container.appendChild(achieveBtn);
+
+  // 图鉴按钮
+  var codexBtn = document.createElement('div');
+  codexBtn.style.cssText = 'margin-top:12px;padding:10px 24px;background:rgba(100,200,255,0.12);border:2px solid rgba(100,200,255,0.35);border-radius:20px;cursor:pointer;text-align:center;color:#88ccff;font-weight:bold;font-size:14px;width:200px;';
+  var cc = getCodexCount();
+  codexBtn.textContent = '📖 图鉴 ' + cc.found + '/' + cc.total;
+  codexBtn.addEventListener('click', function() { showCodexPanel(); });
+  container.appendChild(codexBtn);
 }
 
 function showAchievementPanel() {
@@ -3554,6 +3605,87 @@ function showAchievementPanel() {
   panel.innerHTML = header + grid;
   document.getElementById('startScreen').appendChild(panel);
   document.getElementById('achieveClose').addEventListener('click', function() { panel.remove(); });
+}
+
+function showCodexPanel() {
+  var existing = document.getElementById('codexPanel');
+  if (existing) { existing.remove(); return; }
+
+  var panel = document.createElement('div');
+  panel.id = 'codexPanel';
+  panel.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:360px;max-height:85vh;overflow-y:auto;background:rgba(10,15,30,0.96);border:2px solid rgba(100,200,255,0.4);border-radius:16px;padding:20px;z-index:20;';
+
+  var cc = getCodexCount();
+
+  // Header
+  var headerDiv = document.createElement('div');
+  headerDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;';
+  var titleSpan = document.createElement('span');
+  titleSpan.style.cssText = 'color:#88ccff;font-weight:bold;font-size:18px;';
+  titleSpan.textContent = '\uD83D\uDCD6 猫咪图鉴 ' + cc.found + '/' + cc.total;
+  var closeBtn = document.createElement('span');
+  closeBtn.style.cssText = 'color:#999;font-size:20px;cursor:pointer;padding:4px 8px;';
+  closeBtn.textContent = '\u2715';
+  closeBtn.addEventListener('click', function() { panel.remove(); });
+  headerDiv.appendChild(titleSpan);
+  headerDiv.appendChild(closeBtn);
+  panel.appendChild(headerDiv);
+
+  // Rooms
+  CODEX_ROOMS.forEach(function(room) {
+    var roomFound = 0;
+    room.disguises.forEach(function(d) { if (codex[d.id]) roomFound++; });
+
+    var section = document.createElement('div');
+    section.style.cssText = 'margin-bottom:16px;';
+
+    var roomTitle = document.createElement('div');
+    roomTitle.style.cssText = 'color:#ffd700;font-size:13px;font-weight:bold;margin-bottom:8px;';
+    roomTitle.textContent = room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')';
+    section.appendChild(roomTitle);
+
+    var grid = document.createElement('div');
+    grid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;';
+
+    room.disguises.forEach(function(d) {
+      var found = !!codex[d.id];
+      var card = document.createElement('div');
+      card.style.cssText = 'width:70px;padding:8px 4px;border-radius:8px;text-align:center;' +
+        'border:1px solid ' + (found ? 'rgba(100,200,255,0.3)' : 'rgba(255,255,255,0.08)') + ';' +
+        'background:' + (found ? 'rgba(100,200,255,0.1)' : 'rgba(255,255,255,0.03)') + ';' +
+        'opacity:' + (found ? '1' : '0.35') + ';';
+
+      var icon = document.createElement('div');
+      icon.style.cssText = 'font-size:22px;';
+      icon.textContent = found ? '\uD83D\uDC31' : '\u2753';
+      card.appendChild(icon);
+
+      var label = document.createElement('div');
+      label.style.cssText = 'font-size:10px;margin-top:2px;color:' + (found ? '#ccc' : '#666') + ';';
+      label.textContent = found ? d.name : '???';
+      card.appendChild(label);
+
+      grid.appendChild(card);
+    });
+
+    section.appendChild(grid);
+    panel.appendChild(section);
+  });
+
+  // Progress bar
+  var pct = cc.total > 0 ? Math.round(cc.found / cc.total * 100) : 0;
+  var barOuter = document.createElement('div');
+  barOuter.style.cssText = 'margin-top:12px;background:rgba(255,255,255,0.08);border-radius:8px;height:20px;overflow:hidden;position:relative;';
+  var barInner = document.createElement('div');
+  barInner.style.cssText = 'height:100%;width:' + pct + '%;background:linear-gradient(90deg,#4488cc,#88ccff);border-radius:8px;';
+  var barText = document.createElement('div');
+  barText.style.cssText = 'position:absolute;top:0;left:0;right:0;text-align:center;line-height:20px;font-size:11px;color:#fff;font-weight:bold;';
+  barText.textContent = pct + '%';
+  barOuter.appendChild(barInner);
+  barOuter.appendChild(barText);
+  panel.appendChild(barOuter);
+
+  document.getElementById('startScreen').appendChild(panel);
 }
 
 function startLevel(idx) {

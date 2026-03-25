@@ -6,6 +6,7 @@ var draw = require('./draw-utils');
 var scene = require('./scene');
 var catSystem = require('./cat-system');
 var SFX = require('./sfx');
+var codexMod = require('./codex');
 
 var VIEW_W = scene.VIEW_W;
 var VIEW_H = scene.VIEW_H;
@@ -242,7 +243,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
       x: cp.x, y: cp.y, w: cp.w, h: cp.h,
       origW: cp.origW, origH: cp.origH, scale: cp.scale,
       baseX: cp.baseX, baseY: cp.baseY, depth: cp.depth,
-      drawFn: cp.draw, name: cp.name,
+      drawFn: cp.draw, name: cp.name, disguiseId: tmpl.id,
       quote: catSystem.pickQuote(usedQuotes, roomId),
       color: personality.color,
       personality: personality,
@@ -1613,6 +1614,11 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     // 引导模式：找到第一只猫后进入 found 步骤
     if (this.tutorial && this.tutorial.step <= 1) {
       this.tutorial.step = 2; this.tutorial.timer = 0;
+    }
+    // 图鉴收录
+    var isNewCodex = codexMod.record(hit.catRef.disguiseId);
+    if (isNewCodex) {
+      this.toast = '\uD83D\uDCD6 新图鉴! 找到了【' + hit.catRef.personality.name + '】!';
     }
     // 成就：初次接触 + 累计猫数
     this.totalCatsFound++;

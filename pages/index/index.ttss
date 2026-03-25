@@ -210,3 +210,131 @@
   color: #aaa;
   text-align: center;
 }
+
+/* 图鉴系统 */
+.codex-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  background: rgba(100, 200, 255, 0.12);
+  border: 2rpx solid rgba(100, 200, 255, 0.35);
+  border-radius: 40rpx;
+  padding: 16rpx 36rpx;
+  margin-bottom: 36rpx;
+}
+
+.codex-toggle-icon {
+  font-size: 36rpx;
+}
+
+.codex-toggle-text {
+  font-size: 28rpx;
+  color: #88ccff;
+  font-weight: bold;
+}
+
+.codex-panel {
+  width: 620rpx;
+  background: rgba(10, 15, 30, 0.95);
+  border-radius: 24rpx;
+  padding: 32rpx;
+  margin-bottom: 36rpx;
+  border: 2rpx solid rgba(100, 200, 255, 0.35);
+}
+
+.codex-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28rpx;
+}
+
+.codex-title {
+  font-size: 34rpx;
+  font-weight: bold;
+  color: #88ccff;
+}
+
+.codex-close {
+  font-size: 36rpx;
+  color: #999;
+  padding: 8rpx 16rpx;
+}
+
+.codex-room {
+  margin-bottom: 28rpx;
+}
+
+.codex-room-title {
+  font-size: 26rpx;
+  font-weight: bold;
+  color: #ffd700;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.codex-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.codex-card {
+  width: 130rpx;
+  padding: 16rpx 8rpx;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 2rpx solid rgba(100, 200, 255, 0.3);
+  background: rgba(100, 200, 255, 0.08);
+}
+
+.codex-card.locked {
+  opacity: 0.35;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.codex-icon {
+  font-size: 40rpx;
+  margin-bottom: 4rpx;
+}
+
+.codex-name {
+  font-size: 18rpx;
+  color: #ccc;
+  text-align: center;
+}
+
+.codex-card.locked .codex-name {
+  color: #666;
+}
+
+.codex-progress {
+  margin-top: 16rpx;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 12rpx;
+  height: 32rpx;
+  position: relative;
+  overflow: hidden;
+}
+
+.codex-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #4488cc, #88ccff);
+  border-radius: 12rpx;
+}
+
+.codex-pct {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  line-height: 32rpx;
+  font-size: 20rpx;
+  color: #fff;
+  font-weight: bold;
+}
