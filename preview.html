@@ -3218,7 +3218,7 @@ function drawToolBtn(ctx, x, y, size, icon, label, ready, selected, cd) {
 }
 
 function calcStars() {
-  if (game.state !== 'win') return 0;
+  if (game.state !== 'win' && game.state !== 'win_trans') return 0;
   if (game.mistakes === 0) return 3;
   if (game.mistakes === 1) return 2;
   return 1;

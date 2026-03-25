@@ -316,6 +316,8 @@ GameEngine.prototype._startLoop = function() {
     self._render();
     if (self.ctx.requestAnimationFrame) {
       self._rafId = self.ctx.requestAnimationFrame(loop);
+    } else {
+      self._rafId = setTimeout(loop, 16);
     }
   }
   loop();
@@ -323,8 +325,12 @@ GameEngine.prototype._startLoop = function() {
 
 GameEngine.prototype.stop = function() {
   this._running = false;
-  if (this._rafId != null && this.ctx.cancelAnimationFrame) {
-    this.ctx.cancelAnimationFrame(this._rafId);
+  if (this._rafId != null) {
+    if (this.ctx.cancelAnimationFrame) {
+      this.ctx.cancelAnimationFrame(this._rafId);
+    } else {
+      clearTimeout(this._rafId);
+    }
   }
   this._rafId = null;
 };
@@ -531,6 +537,7 @@ GameEngine.prototype._update = function() {
 };
 
 GameEngine.prototype._updateCatBehaviors = function(dt) {
+  var self = this;
   this.cats.forEach(function(cat) {
     if (cat.found) return;
     var p = cat.personality;
@@ -556,7 +563,7 @@ GameEngine.prototype._updateCatBehaviors = function(dt) {
       if (cat.bubbleTimer <= 0) {
         cat.bubbleActive = true; cat.bubbleElapsed = 0;
         cat.bubbleDuration = catSystem.randRange(p.bubbleDuration);
-        cat.bubbleText = catSystem.getBubbleText(p, scene.ROOMS[this.currentRoomIdx].id);
+        cat.bubbleText = catSystem.getBubbleText(p, scene.ROOMS[self.currentRoomIdx].id);
       }
     } else {
       cat.bubbleElapsed += dt;
@@ -716,7 +723,7 @@ GameEngine.prototype._drawEnvEvent = function(ctx) {
 };
 
 GameEngine.prototype._calcStars = function() {
-  if (this.state !== 'win') return 0;
+  if (this.state !== 'win' && this.state !== 'win_trans') return 0;
   if (this.mistakes === 0) return 3;
   if (this.mistakes === 1) return 2;
   return 1;
@@ -1182,7 +1189,7 @@ GameEngine.prototype._drawCombo = function(ctx) {
     ctx.globalAlpha = alpha;
     ctx.font = 'bold ' + Math.round(24 * scale) + 'px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    var sx = p.x - this.camX, sy = p.y - this.camY - rise;
+    var sx = p.x, sy = p.y - rise;
     ctx.fillStyle = p.count >= 4 ? '#ff4422' : p.count >= 3 ? '#ffaa00' : '#ffd700';
     ctx.fillText(p.count + 'x COMBO!', sx, sy);
     ctx.restore();

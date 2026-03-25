@@ -5,7 +5,8 @@ Page({
 
   onLoad: function(options) {
     // 从 URL 参数获取关卡索引，默认第一关
-    this.roomIdx = parseInt(options.roomIdx) || 0;
+    var idx = parseInt(options.roomIdx, 10);
+    this.roomIdx = isNaN(idx) ? 0 : idx;
   },
 
   onReady: function() {
