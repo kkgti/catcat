@@ -22,6 +22,7 @@ var ACHIEVEMENTS = [
   { id: 'cat_master',   name: '猫咪大师',   icon: '👑', desc: '累计找到30只猫' },
   { id: 'tool_user',    name: '工具达人',   icon: '🧰', desc: '同一局中使用两种道具' },
   { id: 'no_hint',      name: '火眼金睛',   icon: '👁️', desc: '不触发提示就通关' },
+  { id: 'combo_king',   name: '连击之王',   icon: '🔥', desc: '单局达成4连击' },
 ];
 
 function GameEngine() {
@@ -99,6 +100,12 @@ function GameEngine() {
   this._usedLaser = false;
   this._usedCatnip = false;
   this._hintTriggered = false;
+  // 连击系统
+  this.combo = 0;
+  this.maxCombo = 0;
+  this.comboTimer = 0;
+  this.comboWindow = 8;
+  this.comboPopup = null;
   // 动画帧 ID
   this._rafId = null;
   // 回调
@@ -220,6 +227,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this._usedLaser = false;
   this._usedCatnip = false;
   this._hintTriggered = false;
+  this.combo = 0; this.maxCombo = 0; this.comboTimer = 0; this.comboPopup = null;
 
   var roomId = room.id;
 
@@ -451,6 +459,16 @@ GameEngine.prototype._update = function() {
   // 计时器
   if (this.state === 'playing') {
     this.playTime += dt;
+  }
+
+  // 连击倒计时
+  if (this.comboTimer > 0) {
+    this.comboTimer -= dt;
+    if (this.comboTimer <= 0) { this.combo = 0; this.comboTimer = 0; }
+  }
+  if (this.comboPopup) {
+    this.comboPopup.timer -= dt;
+    if (this.comboPopup.timer <= 0) this.comboPopup = null;
   }
 
   // 提示系统：15秒没找到猫，给出微光提示
@@ -803,6 +821,7 @@ GameEngine.prototype._render = function() {
 
   // HUD
   this._drawHUD(ctx);
+  this._drawCombo(ctx);
   // 工具栏
   this._drawToolbar(ctx);
 
@@ -1081,6 +1100,41 @@ GameEngine.prototype._drawHUD = function(ctx) {
   this.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
 };
 
+GameEngine.prototype._drawCombo = function(ctx) {
+  // 连击指示器
+  if (this.combo >= 2 && this.state === 'playing') {
+    var pct = this.comboTimer / this.comboWindow;
+    var barW = 60, barH = 4;
+    var bx = VIEW_W - barW - 18, by = 76;
+    ctx.save();
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = this.combo >= 4 ? '#ff6644' : this.combo >= 3 ? '#ffaa00' : '#ffd700';
+    ctx.fillText(this.combo + 'x 连击!', VIEW_W - 22, by - 6);
+    draw.roundRect(ctx, bx, by + 2, barW, barH, 2, 'rgba(255,255,255,0.15)');
+    var fillW = barW * pct;
+    if (fillW > 0) {
+      draw.roundRect(ctx, bx, by + 2, fillW, barH, 2, this.combo >= 3 ? '#ffaa00' : '#ffd700');
+    }
+    ctx.restore();
+  }
+  // 连击弹出动画
+  if (this.comboPopup) {
+    var p = this.comboPopup;
+    var prog = 1 - p.timer / 1.5;
+    var alpha = prog < 0.7 ? 1 : 1 - (prog - 0.7) / 0.3;
+    var rise = prog * 40;
+    var scale = prog < 0.15 ? easeOutBack(prog / 0.15) : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold ' + Math.round(24 * scale) + 'px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var sx = p.x - this.camX, sy = p.y - this.camY - rise;
+    ctx.fillStyle = p.count >= 4 ? '#ff4422' : p.count >= 3 ? '#ffaa00' : '#ffd700';
+    ctx.fillText(p.count + 'x COMBO!', sx, sy);
+    ctx.restore();
+  }
+};
+
 GameEngine.prototype._drawToolbar = function(ctx) {
   if (this.state !== 'playing' && this.state !== 'found_anim' && this.state !== 'wrong_anim') return;
   var btnSize = 50, pad = 12;
@@ -1184,12 +1238,11 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
   ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
   ctx.fillText('失误', leftX, stat2Y + 16);
 
-  // 图鉴进度
-  var cc = codexMod.getCount();
-  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#88ddaa';
-  ctx.fillText(cc.found + '/' + cc.total, rightX, stat2Y);
+  // 最高连击
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = this.maxCombo >= 3 ? '#ffaa00' : '#88ddaa';
+  ctx.fillText(this.maxCombo > 0 ? this.maxCombo + 'x' : '-', rightX, stat2Y);
   ctx.font = '11px sans-serif'; ctx.fillStyle = '#888';
-  ctx.fillText('图鉴', rightX, stat2Y + 16);
+  ctx.fillText('连击', rightX, stat2Y + 16);
 
   // ── 星级评价（仅胜利）──
   if (isWin) {
@@ -1691,6 +1744,18 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (isNewCodex) {
       this.toast = '\uD83D\uDCD6 新图鉴! 找到了【' + hit.catRef.personality.name + '】!';
     }
+    // 连击系统
+    this.combo++;
+    this.comboTimer = this.comboWindow;
+    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+    if (this.combo >= 2) {
+      this.comboPopup = { count: this.combo, timer: 1.5, x: hit.catRef.x + hit.catRef.w/2, y: hit.catRef.y - 10 };
+      if (this.combo >= 3) {
+        this._spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
+        this.shakeTimer = 0.15;
+      }
+      if (this.combo >= 4) { this._unlockAchievement('combo_king'); this._saveAchievements(); }
+    }
     // 成就：初次接触 + 累计猫数
     this.totalCatsFound++;
     this._unlockAchievement('first_cat');
@@ -1703,6 +1768,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
       this.toastTimer = 1.0;
       return;
     }
+    this.combo = 0; this.comboTimer = 0;
     this.lives--;
     this.mistakes++;
     SFX.wrong();
