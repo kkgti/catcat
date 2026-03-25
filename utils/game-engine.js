@@ -52,6 +52,9 @@ function GameEngine() {
   // 假穿帮
   this.fakeWobbles = [];
   this.fakeWobbleTimer = 0;
+  // 随机环境事件
+  this.envEvent = null;
+  this.envEventCooldown = 0;
   // 工具系统
   this.activeTool = null;
   this.laserCooldown = 0;
@@ -211,6 +214,8 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.hintAlpha = 0;
   this._lastFoundTime = 0;
   this.particles = [];
+  this.envEvent = null;
+  this.envEventCooldown = 10 + Math.random() * 8;
   this._usedLaser = false;
   this._usedCatnip = false;
   this._hintTriggered = false;
@@ -338,6 +343,7 @@ GameEngine.prototype._update = function() {
   if (this.state === 'playing' || this.state === 'intro') {
     this._updateCatBehaviors(dt);
     this._updateFakeWobbles(dt);
+    this._updateEnvEvent(dt);
   }
 
   // 新手引导
@@ -560,6 +566,115 @@ GameEngine.prototype._getFakeWobble = function(itemId) {
   return null;
 };
 
+// ========== 随机环境事件 ==========
+var ENV_EVENTS = {
+  livingroom: [
+    { type:'flicker', duration:1.2 },
+    { type:'creak', duration:0.8 },
+    { type:'shadow', duration:1.5 },
+  ],
+  kitchen: [
+    { type:'flicker', duration:1.2 },
+    { type:'steam', duration:2.0 },
+    { type:'drip', duration:1.5 },
+  ],
+  bedroom: [
+    { type:'flicker', duration:1.0 },
+    { type:'shadow', duration:1.5 },
+    { type:'creak', duration:0.8 },
+  ],
+  bathroom: [
+    { type:'drip', duration:1.5 },
+    { type:'steam', duration:2.0 },
+    { type:'flicker', duration:1.0 },
+  ],
+  study: [
+    { type:'creak', duration:0.8 },
+    { type:'flicker', duration:1.0 },
+    { type:'shadow', duration:1.5 },
+  ],
+};
+
+GameEngine.prototype._updateEnvEvent = function(dt) {
+  if (this.envEvent) {
+    this.envEvent.timer -= dt;
+    if (this.envEvent.timer <= 0) {
+      this.envEvent = null;
+      this.envEventCooldown = 8 + Math.random() * 12;
+    }
+    return;
+  }
+  this.envEventCooldown -= dt;
+  if (this.envEventCooldown > 0) return;
+  var roomId = scene.ROOMS[this.currentRoomIdx].id;
+  var pool = ENV_EVENTS[roomId] || ENV_EVENTS.livingroom;
+  var evt = pool[Math.floor(Math.random() * pool.length)];
+  var srcItem = this.allItems[Math.floor(Math.random() * this.allItems.length)];
+  this.envEvent = {
+    type: evt.type, duration: evt.duration, timer: evt.duration,
+    x: srcItem.baseX, y: srcItem.baseY - srcItem.h * 0.3,
+  };
+};
+
+GameEngine.prototype._drawEnvEvent = function(ctx) {
+  if (!this.envEvent) return;
+  var e = this.envEvent;
+  var p = 1 - e.timer / e.duration;
+
+  if (e.type === 'flicker') {
+    var flk = Math.sin(p * Math.PI * 8);
+    if (flk > 0.3) {
+      ctx.save(); ctx.globalAlpha = flk * 0.12;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+      ctx.restore();
+    }
+  } else if (e.type === 'drip') {
+    var dropY = e.y + p * 50;
+    var alpha = p < 0.8 ? 0.6 : (1 - p) * 3;
+    ctx.save(); ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#88ccff';
+    ctx.beginPath(); ctx.arc(e.x, dropY, 3 - p * 1.5, 0, Math.PI*2); ctx.fill();
+    if (p > 0.7) {
+      var rippleP = (p - 0.7) / 0.3;
+      ctx.globalAlpha = (1 - rippleP) * 0.3;
+      ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(e.x, e.y + 50, rippleP * 12, rippleP * 4, 0, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  } else if (e.type === 'steam') {
+    ctx.save();
+    for (var si = 0; si < 3; si++) {
+      var sp = (p + si * 0.15) % 1;
+      var sx = e.x + Math.sin(sp * 6 + si) * 8;
+      var sy = e.y - sp * 40;
+      ctx.globalAlpha = (1 - sp) * 0.2;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(sx, sy, 4 + sp * 6, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  } else if (e.type === 'shadow') {
+    var shadowX = scene.BACK_L + p * (scene.BACK_R - scene.BACK_L) * 1.2 - 30;
+    ctx.save();
+    ctx.globalAlpha = 0.06 * Math.sin(p * Math.PI);
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(shadowX, scene.BACK_T + (scene.BACK_B - scene.BACK_T) * 0.3, 25, 45, 0.2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  } else if (e.type === 'creak') {
+    var crP = Math.sin(p * Math.PI);
+    ctx.save(); ctx.globalAlpha = crP * 0.4;
+    ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1;
+    for (var ci = 0; ci < 3; ci++) {
+      var cr = 8 + ci * 5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, cr * crP, -0.3 + ci * 0.2, 0.3 + ci * 0.2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+};
+
 GameEngine.prototype._calcStars = function() {
   if (this.state !== 'win') return 0;
   if (this.mistakes === 0) return 3;
@@ -674,6 +789,8 @@ GameEngine.prototype._render = function() {
   if (this.catnipActive) this._drawCatnipEffect(ctx);
   // 粒子
   this._drawParticles(ctx);
+  // 环境事件
+  this._drawEnvEvent(ctx);
 
   ctx.restore();
   // 关闭外层 s*dpr+shake 变换，HUD/工具栏/Toast/结算在干净的 s*dpr 坐标下绘制

@@ -1551,6 +1551,9 @@ var game = {
   // 假穿帮（狡猾猫制造）
   fakeWobbles: [],
   fakeWobbleTimer: 0,
+  // 随机环境事件
+  envEvent: null,       // { type, timer, duration, x, y, ...extra }
+  envEventCooldown: 0,
   // 工具系统
   activeTool: null,    // null, 'laser', 'catnip'
   laserCooldown: 0,    // 剩余冷却秒数
@@ -1703,6 +1706,8 @@ function initGame(roomIdx) {
   game.hintTimer = 0; game.hintCat = null; game.hintAlpha = 0;
   game._lastFoundTime = 0;
   game.particles = [];
+  game.envEvent = null;
+  game.envEventCooldown = 10 + Math.random() * 8; // 开局后10-18秒第一个事件
   game._usedLaser = false;
   game._usedCatnip = false;
   game._hintTriggered = false;
@@ -1898,6 +1903,8 @@ function update() {
     });
     // 狡猾猫的假穿帮：让附近的普通物品偶尔也晃一下
     updateFakeWobbles(dt);
+    // 随机环境事件
+    updateEnvEvent(dt);
   }
 
   // 新手引导
@@ -2081,6 +2088,125 @@ function drawStudyBg(ctx) {
   drawCeilingLight(ctx);
   var glowPulse = 1.0 + Math.sin(Date.now() / 2200) * 0.06;
   drawWarmGlow(ctx, 300, 420, 120 * glowPulse, 'rgba(255,210,120,0.06)');
+}
+
+// ==================== 随机环境事件 ====================
+var ENV_EVENTS = {
+  livingroom: [
+    { type:'flicker', name:'灯光闪烁', duration:1.2 },
+    { type:'creak',   name:'地板咯吱', duration:0.8 },
+    { type:'shadow',  name:'窗外影子', duration:1.5 },
+  ],
+  kitchen: [
+    { type:'flicker', name:'灯光闪烁', duration:1.2 },
+    { type:'steam',   name:'水壶冒烟', duration:2.0 },
+    { type:'drip',    name:'水龙头滴水', duration:1.5 },
+  ],
+  bedroom: [
+    { type:'flicker', name:'灯光闪烁', duration:1.0 },
+    { type:'shadow',  name:'窗外影子', duration:1.5 },
+    { type:'creak',   name:'木板声', duration:0.8 },
+  ],
+  bathroom: [
+    { type:'drip',    name:'水龙头滴水', duration:1.5 },
+    { type:'steam',   name:'热气腾腾', duration:2.0 },
+    { type:'flicker', name:'灯光闪烁', duration:1.0 },
+  ],
+  study: [
+    { type:'creak',   name:'书架响动', duration:0.8 },
+    { type:'flicker', name:'台灯闪烁', duration:1.0 },
+    { type:'shadow',  name:'窗外影子', duration:1.5 },
+  ],
+};
+
+function updateEnvEvent(dt) {
+  // 正在播放事件
+  if (game.envEvent) {
+    game.envEvent.timer -= dt;
+    if (game.envEvent.timer <= 0) {
+      game.envEvent = null;
+      game.envEventCooldown = 8 + Math.random() * 12; // 下次事件间隔
+    }
+    return;
+  }
+  // 冷却中
+  game.envEventCooldown -= dt;
+  if (game.envEventCooldown > 0) return;
+  // 触发新事件
+  var roomId = ROOMS[game.currentRoomIdx].id;
+  var pool = ENV_EVENTS[roomId] || ENV_EVENTS.livingroom;
+  var evt = pool[Math.floor(Math.random() * pool.length)];
+  // 选一个随机物品位置作为事件源
+  var srcItem = game.allItems[Math.floor(Math.random() * game.allItems.length)];
+  game.envEvent = {
+    type: evt.type, duration: evt.duration, timer: evt.duration,
+    x: srcItem.baseX, y: srcItem.baseY - srcItem.h * 0.3,
+  };
+}
+
+function drawEnvEvent(ctx) {
+  if (!game.envEvent) return;
+  var e = game.envEvent;
+  var p = 1 - e.timer / e.duration; // 0→1 进度
+
+  if (e.type === 'flicker') {
+    // 全屏灯光闪烁
+    var flk = Math.sin(p * Math.PI * 8);
+    if (flk > 0.3) {
+      ctx.save(); ctx.globalAlpha = flk * 0.12;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+      ctx.restore();
+    }
+  } else if (e.type === 'drip') {
+    // 水滴动画
+    var dropY = e.y + p * 50;
+    var alpha = p < 0.8 ? 0.6 : (1 - p) * 3;
+    ctx.save(); ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#88ccff';
+    ctx.beginPath(); ctx.arc(e.x, dropY, 3 - p * 1.5, 0, Math.PI*2); ctx.fill();
+    // 水波纹（落地后）
+    if (p > 0.7) {
+      var rippleP = (p - 0.7) / 0.3;
+      ctx.globalAlpha = (1 - rippleP) * 0.3;
+      ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(e.x, e.y + 50, rippleP * 12, rippleP * 4, 0, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  } else if (e.type === 'steam') {
+    // 蒸汽上升
+    ctx.save();
+    for (var si = 0; si < 3; si++) {
+      var sp = (p + si * 0.15) % 1;
+      var sx = e.x + Math.sin(sp * 6 + si) * 8;
+      var sy = e.y - sp * 40;
+      ctx.globalAlpha = (1 - sp) * 0.2;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(sx, sy, 4 + sp * 6, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  } else if (e.type === 'shadow') {
+    // 窗外掠过的影子
+    var shadowX = BACK_L + p * (BACK_R - BACK_L) * 1.2 - 30;
+    ctx.save();
+    ctx.globalAlpha = 0.06 * Math.sin(p * Math.PI);
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(shadowX, BACK_T + (BACK_B - BACK_T) * 0.3, 25, 45, 0.2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  } else if (e.type === 'creak') {
+    // 咯吱声 — 物品位置微颤线条
+    var crP = Math.sin(p * Math.PI);
+    ctx.save(); ctx.globalAlpha = crP * 0.4;
+    ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1;
+    for (var ci = 0; ci < 3; ci++) {
+      var cr = 8 + ci * 5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, cr * crP, -0.3 + ci * 0.2, 0.3 + ci * 0.2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 }
 
 // ==================== 渲染 ====================
@@ -2719,6 +2845,8 @@ function render() {
   if (game.catnipActive) { drawCatnipEffect(ctx); }
   // 粒子
   drawParticles(ctx);
+  // 环境事件
+  drawEnvEvent(ctx);
 
   ctx.restore();
 
