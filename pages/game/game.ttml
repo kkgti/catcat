@@ -4,7 +4,7 @@
     id="gameCanvas"
     class="game-canvas"
     bindtouchstart="onTouchStart"
-    bindtouchmove="onTouchMove"
+    catchtouchmove="onTouchMove"
     bindtouchend="onTouchEnd"
   ></canvas>
 </view>

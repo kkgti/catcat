@@ -162,6 +162,145 @@ var SFX = (function() {
   };
 })();
 
+// ==================== 环境音效系统 ====================
+var AmbientSound = (function() {
+  var audioCtx = null;
+  var activeTimers = [];
+  var activeNodes = [];
+  var running = false;
+
+  function ctx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+    }
+    return audioCtx;
+  }
+
+  // 时钟滴答：客厅 / 书房
+  function startClock() {
+    var id = setInterval(function() {
+      if (SFX.isMuted()) return;
+      var c = ctx(); if (!c) return;
+      var osc = c.createOscillator();
+      var gain = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 1800;
+      gain.gain.setValueAtTime(0.03, c.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.04);
+      osc.connect(gain); gain.connect(c.destination);
+      osc.start(c.currentTime);
+      osc.stop(c.currentTime + 0.04);
+    }, 1000);
+    activeTimers.push(id);
+  }
+
+  // 鱼缸气泡：客厅
+  function startBubbles() {
+    function playBubble() {
+      if (!running) return;
+      if (!SFX.isMuted()) {
+        var c = ctx();
+        if (c) {
+          var osc = c.createOscillator();
+          var gain = c.createGain();
+          osc.type = 'sine';
+          var baseFreq = 600 + Math.random() * 400;
+          osc.frequency.setValueAtTime(baseFreq, c.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(baseFreq * 2.5, c.currentTime + 0.08);
+          gain.gain.setValueAtTime(0.025, c.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.1);
+          osc.connect(gain); gain.connect(c.destination);
+          osc.start(c.currentTime);
+          osc.stop(c.currentTime + 0.1);
+        }
+      }
+      var delay = 800 + Math.random() * 2200;
+      var tid = setTimeout(playBubble, delay);
+      activeTimers.push(tid);
+    }
+    var tid = setTimeout(playBubble, 500 + Math.random() * 1500);
+    activeTimers.push(tid);
+  }
+
+  // 风声：卧室（低频白噪声）
+  function startWind() {
+    var c = ctx(); if (!c) return;
+    var bufferSize = c.sampleRate * 2;
+    var buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < bufferSize; i++) { data[i] = Math.random() * 2 - 1; }
+    var noise = c.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+    var filter = c.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 0.7;
+    var gain = c.createGain();
+    gain.gain.value = SFX.isMuted() ? 0 : 0.04;
+    noise.connect(filter); filter.connect(gain); gain.connect(c.destination);
+    noise.start();
+    activeNodes.push({ source: noise, gain: gain });
+    var id = setInterval(function() {
+      gain.gain.value = SFX.isMuted() ? 0 : 0.04;
+    }, 300);
+    activeTimers.push(id);
+  }
+
+  // 水滴声：厨房 / 浴室
+  function startDrips() {
+    function playDrip() {
+      if (!running) return;
+      if (!SFX.isMuted()) {
+        var c = ctx();
+        if (c) {
+          var osc = c.createOscillator();
+          var gain = c.createGain();
+          osc.type = 'sine';
+          var freq = 1200 + Math.random() * 800;
+          osc.frequency.setValueAtTime(freq, c.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(freq * 0.4, c.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.035, c.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.15);
+          osc.connect(gain); gain.connect(c.destination);
+          osc.start(c.currentTime);
+          osc.stop(c.currentTime + 0.15);
+        }
+      }
+      var delay = 1500 + Math.random() * 4000;
+      var tid = setTimeout(playDrip, delay);
+      activeTimers.push(tid);
+    }
+    var tid = setTimeout(playDrip, 300 + Math.random() * 2000);
+    activeTimers.push(tid);
+  }
+
+  return {
+    startAmbient: function(roomId) {
+      this.stopAmbient();
+      running = true;
+      switch (roomId) {
+        case 'livingroom': startClock(); startBubbles(); break;
+        case 'kitchen': startDrips(); break;
+        case 'bedroom': startWind(); break;
+        case 'bathroom': startDrips(); break;
+        case 'study': startClock(); break;
+      }
+    },
+    stopAmbient: function() {
+      running = false;
+      for (var i = 0; i < activeTimers.length; i++) {
+        clearInterval(activeTimers[i]); clearTimeout(activeTimers[i]);
+      }
+      activeTimers = [];
+      for (var j = 0; j < activeNodes.length; j++) {
+        try { activeNodes[j].source.stop(); } catch(e) {}
+      }
+      activeNodes = [];
+    }
+  };
+})();
+
 // ==================== draw-utils ====================
 var DrawUtils = {
   roundRect: function(ctx, x, y, w, h, r, fill, stroke) {
@@ -1142,24 +1281,24 @@ var STUDY_DISGUISES = [
 // ==================== 关卡配置 ====================
 var ROOMS = [
   { id:'livingroom', name:'客厅', emoji:'🛋️', desc:'温馨客厅，猫咪入门级',
-    catCount:3, lives:3, behaviorMult:1.0,
-    hintDelay:12, fakeWobbleInterval:[99,99], wobbleStrengthMult:1.0,
+    catCount:2, lives:3, behaviorMult:1.0, envDistraction:0.2,
+    hintDelay:20, fakeWobbleInterval:[12,25], wobbleStrengthMult:1.2,
     items:ITEM_TEMPLATES, disguises:CAT_DISGUISE_TEMPLATES, bgType:'livingroom' },
   { id:'kitchen', name:'厨房', emoji:'🍳', desc:'美食飘香，猫咪更机警',
-    catCount:4, lives:3, behaviorMult:1.2,
-    hintDelay:15, fakeWobbleInterval:[15,25], wobbleStrengthMult:0.9,
+    catCount:3, lives:3, behaviorMult:1.2, envDistraction:0.5,
+    hintDelay:18, fakeWobbleInterval:[8,20], wobbleStrengthMult:1.0,
     items:KITCHEN_ITEMS, disguises:KITCHEN_DISGUISES, bgType:'kitchen' },
   { id:'bedroom', name:'卧室', emoji:'🛏️', desc:'安静卧室，狡猾猫出没',
-    catCount:5, lives:2, behaviorMult:1.5,
-    hintDelay:18, fakeWobbleInterval:[10,18], wobbleStrengthMult:0.8,
+    catCount:3, lives:2, behaviorMult:1.5, envDistraction:0.8,
+    hintDelay:12, fakeWobbleInterval:[5,15], wobbleStrengthMult:0.7,
     items:BEDROOM_ITEMS, disguises:BEDROOM_DISGUISES, bgType:'bedroom' },
   { id:'bathroom', name:'浴室', emoji:'🛁', desc:'水汽弥漫，猫咪隐匿',
-    catCount:5, lives:2, behaviorMult:1.8,
-    hintDelay:22, fakeWobbleInterval:[6,14], wobbleStrengthMult:0.7,
+    catCount:3, lives:3, behaviorMult:1.3, envDistraction:0.6,
+    hintDelay:16, fakeWobbleInterval:[12,22], wobbleStrengthMult:0.85,
     items:BATHROOM_ITEMS, disguises:BATHROOM_DISGUISES, bgType:'bathroom' },
   { id:'study', name:'书房', emoji:'📚', desc:'书海迷宫，大师级挑战',
-    catCount:6, lives:2, behaviorMult:2.2,
-    hintDelay:28, fakeWobbleInterval:[4,10], wobbleStrengthMult:0.6,
+    catCount:4, lives:2, behaviorMult:2.0, envDistraction:1.0,
+    hintDelay:25, fakeWobbleInterval:[5,12], wobbleStrengthMult:0.65,
     items:STUDY_ITEMS, disguises:STUDY_DISGUISES, bgType:'study' },
 ];
 
@@ -1184,14 +1323,6 @@ function shuffle(arr) {
   var a = arr.slice();
   for (var i = a.length-1; i > 0; i--) { var j = Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; }
   return a;
-}
-
-function checkOverlap(x, y, w, h, placed, pad) {
-  for (var i = 0; i < placed.length; i++) {
-    var p = placed[i];
-    if (x < p.x+p.w+pad && x+w+pad > p.x && y < p.y+p.h+pad && y+h+pad > p.y) return true;
-  }
-  return false;
 }
 
 // 等距区域：根据物品类型决定放置在哪个区域
@@ -1769,7 +1900,7 @@ function initGame(roomIdx) {
   game.fakeWobbles = [];
   var fwi = room.fakeWobbleInterval || [8, 20];
   game.fakeWobbleTimer = fwi[0] + Math.random() * (fwi[1] - fwi[0]);
-  game.activeTool = null; game.retryBtn = null; game.nextLevelBtn = null; game.selectBtn = null;
+  game.activeTool = null; game.retryBtn = null; game.nextLevelBtn = null; game.selectBtn = null; game.shareBtn = null;
   game.laserCooldown = 0; game.laserActive = false; game.laserTimer = 0;
   game.catnipCooldown = 0; game.catnipActive = false; game.catnipTimer = 0;
   game.playTime = 0;
@@ -1784,6 +1915,9 @@ function initGame(roomIdx) {
   game.achievePopup = null;
   game.combo = 0; game.maxCombo = 0; game.comboTimer = 0; game.comboPopup = null;
   game.paused = false;
+
+  // 启动环境音效
+  AmbientSound.startAmbient(room.id);
 
   // 随机放置当前房间的物品
   var roomItems = placeItems(room.items);
@@ -1908,11 +2042,6 @@ function getFakeWobble(itemId) {
   return null;
 }
 
-function clampCamera() {
-  game.camX = Math.max(0, Math.min(ROOM_W - VIEW_W, game.camX));
-  game.camY = Math.max(0, Math.min(ROOM_H - VIEW_H, game.camY));
-}
-
 // ==================== 更新逻辑 ====================
 function update() {
   var now = Date.now();
@@ -1927,7 +2056,7 @@ function update() {
     game.introTimer -= dt;
     var curSec = Math.ceil(game.introTimer);
     if (curSec !== prevSec && curSec > 0 && curSec <= 3) SFX.tick();
-    if (game.introTimer <= 0) {
+    if (game.introTimer <= -0.5) {
       game.state = 'playing';
       var rm = ROOMS[game.currentRoomIdx];
       game.toast = rm.emoji + ' ' + rm.name + ' — 找出' + rm.catCount + '只猫!'; game.toastTimer = 2.5;
@@ -2025,6 +2154,7 @@ function update() {
     game.transTimer -= dt;
     if (game.transTimer <= 0) {
       game.state = 'win';
+      AmbientSound.stopAmbient();
       // 保存进度
       var stars = calcStars();
       var pid = ROOMS[game.currentRoomIdx].id;
@@ -2042,6 +2172,7 @@ function update() {
     game.transTimer -= dt;
     if (game.transTimer <= 0) {
       game.state = 'lose';
+      AmbientSound.stopAmbient();
     }
   }
 
@@ -2257,6 +2388,9 @@ function drawEnvEvent(ctx) {
   if (!game.envEvent) return;
   var e = game.envEvent;
   var p = 1 - e.timer / e.duration; // 0→1 进度
+  // envDistraction 缩放干扰可见度
+  var dist = ROOMS[game.currentRoomIdx] && ROOMS[game.currentRoomIdx].envDistraction;
+  if (dist !== undefined && dist < 1) { ctx.save(); ctx.globalAlpha *= dist; }
 
   if (e.type === 'flicker') {
     // 全屏灯光闪烁
@@ -2316,6 +2450,9 @@ function drawEnvEvent(ctx) {
     }
     ctx.restore();
   }
+  // 关闭 envDistraction 的 save
+  var dist2 = ROOMS[game.currentRoomIdx] && ROOMS[game.currentRoomIdx].envDistraction;
+  if (dist2 !== undefined && dist2 < 1) { ctx.restore(); }
 }
 
 // ==================== 渲染 ====================
@@ -2896,10 +3033,14 @@ function render() {
     } else {
       // 阶段2：倒计时 3..2..1..GO!
       var cdElapsed = elapsed - 1.5;
-      var cd = Math.ceil(game.introTimer);
+      var cd = Math.min(3, Math.ceil(game.introTimer));
       var cdText = cd > 0 ? cd.toString() : 'GO!';
-      // 每个数字弹入
-      var cdFrac = cdElapsed % 1.0;
+      // 每个数字从出现起独立计时弹入
+      // "3"从phase2开头, "2"从introTimer=2.0, "1"从introTimer=1.0, "GO!"从introTimer=0
+      var cdFrac;
+      if (cd <= 0) { cdFrac = -game.introTimer; }
+      else if (cd >= 3) { cdFrac = cdElapsed; }
+      else { cdFrac = cdElapsed - (3.5 - cd); }
       var cdScale = cdFrac < 0.15 ? easeOutBack(cdFrac / 0.15) : 1;
       var cdAlpha = cdFrac < 0.1 ? cdFrac / 0.1 : 1;
 
@@ -3010,6 +3151,12 @@ function render() {
   drawEnvEvent(ctx);
 
   ctx.restore();
+  // 关闭外层 s*dpr+shake 变换
+  ctx.restore();
+
+  // 重新应用 s*dpr 变换（不含 shake），让 HUD 坐标与点击坐标对齐
+  ctx.save();
+  ctx.scale(s*dpr, s*dpr);
 
   // ---- 以下是固定在屏幕上的 UI ----
   // HUD
@@ -3028,9 +3175,6 @@ function render() {
     ctx.fillStyle = '#fff'; ctx.fillText(game.toast, VIEW_W/2, VIEW_H*0.88);
   }
 
-  // 成就弹窗
-  drawAchievePopup(ctx);
-
   // 暂停菜单
   drawPauseMenu(ctx);
 
@@ -3047,10 +3191,18 @@ function render() {
     drawEndScreen(ctx);
   }
 
+  // 分享卡片（覆盖在结算上面）
+  if (game.subScreen === 'share_card') {
+    drawShareCard(ctx);
+  }
+
   // 新手引导覆盖层
   if (game.tutorial && game.state !== 'win' && game.state !== 'lose') {
     drawTutorial(ctx);
   }
+
+  // 成就弹窗（最上层）
+  drawAchievePopup(ctx);
 
   ctx.restore();
 }
@@ -3078,11 +3230,11 @@ function drawHUD(ctx) {
   // 暂停按钮（HUD栏右侧下方）
   ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('⏸', VIEW_W - 56, 68);
-  game.pauseBtn = { x: VIEW_W - 72, y: 56, w: 32, h: 24 };
+  game.pauseBtn = { x: VIEW_W - 78, y: 46, w: 44, h: 44 };
   // 音量按钮
   var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
   ctx.fillText(muteIcon, VIEW_W - 22, 68);
-  game.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
+  game.muteBtn = { x: VIEW_W - 44, y: 46, w: 44, h: 44 };
 }
 
 function drawPauseMenu(ctx) {
@@ -3167,44 +3319,6 @@ function drawCombo(ctx) {
     ctx.fillText(p.count + 'x COMBO!', sx, sy);
     ctx.restore();
   }
-}
-
-function drawScrollHints(ctx) {
-  var alpha = 0.3 + Math.sin(Date.now()/500)*0.15;
-  ctx.save(); ctx.globalAlpha = alpha;
-  ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff';
-  if (game.camY > 10) ctx.fillText('▲', VIEW_W/2, 70);
-  if (game.camY < ROOM_H - VIEW_H - 10) ctx.fillText('▼', VIEW_W/2, VIEW_H - 15);
-  if (game.camX > 10) ctx.fillText('◀', 12, VIEW_H/2);
-  if (game.camX < ROOM_W - VIEW_W - 10) ctx.fillText('▶', VIEW_W - 12, VIEW_H/2);
-  ctx.restore();
-}
-
-function drawMinimap(ctx) {
-  var mw = 80, mh = mw * (ROOM_H/ROOM_W);
-  var mx = VIEW_W - mw - 15, my = VIEW_H - mh - 20;
-  // 背景
-  ctx.save(); ctx.globalAlpha = 0.5;
-  DrawUtils.roundRect(ctx, mx-2, my-2, mw+4, mh+4, 4, 'rgba(0,0,0,0.6)');
-  ctx.fillStyle = '#4a4a6a'; ctx.fillRect(mx, my, mw, mh*0.55);
-  ctx.fillStyle = '#5c4a3a'; ctx.fillRect(mx, my+mh*0.55, mw, mh*0.45);
-  // 物品点
-  var sx = mw/ROOM_W, sy = mh/ROOM_H;
-  game.allItems.forEach(function(item) {
-    if (item.isCat && item.catRef.found) {
-      ctx.fillStyle = '#ffd700';
-    } else if (item.isCat) {
-      return; // 不显示未找到的猫
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    }
-    ctx.fillRect(mx + item.x*sx, my + item.y*sy, Math.max(2, item.w*sx), Math.max(2, item.h*sy));
-  });
-  // 视口框
-  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
-  ctx.strokeRect(mx + game.camX*sx, my + game.camY*sy, VIEW_W*sx, VIEW_H*sy);
-  ctx.restore();
 }
 
 function drawLaserEffect(ctx) {
@@ -3497,16 +3611,126 @@ function drawEndScreen(ctx) {
     game.selectBtn = { x: cx + btnGap/2, y: btnStartY, w: btnW, h: btnH };
   }
 
-  // ── 保存卡片按钮（仅胜利时显示）──
+  // ── 分享按钮（仅胜利时显示）──
   if (isWin) {
-    var saveY = isWin && game.currentRoomIdx < ROOMS.length - 1 ? btnStartY + btnH + 50 : btnStartY + btnH + 12;
-    ctx.font = '12px sans-serif'; ctx.fillStyle = 'rgba(255,215,0,0.5)';
-    ctx.fillText('📷 长按截图分享成绩', cx, saveY);
+    var shareY = game.currentRoomIdx < ROOMS.length - 1 ? btnStartY + btnH + 50 : btnStartY + btnH + 12;
+    var shareBtnW = 130, shareBtnH = 36;
+    var shareBtnX = cx - shareBtnW / 2;
+    var shareGrad = ctx.createLinearGradient(shareBtnX, shareY, shareBtnX, shareY + shareBtnH);
+    shareGrad.addColorStop(0, '#43b581');
+    shareGrad.addColorStop(1, '#2d8b5e');
+    DrawUtils.roundRect(ctx, shareBtnX, shareY, shareBtnW, shareBtnH, 18, shareGrad);
+    ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('📤 分享成绩', cx, shareY + shareBtnH / 2);
+    game.shareBtn = { x: shareBtnX, y: shareY, w: shareBtnW, h: shareBtnH };
+  } else {
+    game.shareBtn = null;
+  }
+}
+
+// ==================== 分享成绩卡片 ====================
+function drawShareCard(ctx) {
+  var room = ROOMS[game.currentRoomIdx];
+  var stars = calcStars();
+  ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  var cardW = 340, cardH = 440;
+  var cardX = (VIEW_W - cardW) / 2, cardY = (VIEW_H - cardH) / 2 - 40;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,180,50,0.3)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 4;
+  var bgGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+  bgGrad.addColorStop(0, '#2a1f3d'); bgGrad.addColorStop(0.4, '#1e1a30'); bgGrad.addColorStop(1, '#15132a');
+  DrawUtils.roundRect(ctx, cardX, cardY, cardW, cardH, 20, bgGrad);
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 2;
+  DrawUtils.roundRect(ctx, cardX, cardY, cardW, cardH, 20, null, ctx.strokeStyle);
+  // 顶部金线
+  var topGrad = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY);
+  topGrad.addColorStop(0, '#ffd700'); topGrad.addColorStop(0.5, '#ffaa33'); topGrad.addColorStop(1, '#ffd700');
+  DrawUtils.roundRect(ctx, cardX + 20, cardY + 1, cardW - 40, 6, 3, topGrad);
+  var cx = VIEW_W / 2;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // 标题
+  ctx.font = 'bold 24px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('🐱 变身躲猫猫', cx, cardY + 40);
+  ctx.strokeStyle = 'rgba(255,215,0,0.15)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cardX + 30, cardY + 60); ctx.lineTo(cardX + cardW - 30, cardY + 60); ctx.stroke();
+  // 关卡
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#ccc';
+  ctx.fillText(room.emoji + ' ' + room.name, cx, cardY + 82);
+  // 星级
+  var starY = cardY + 118;
+  ctx.font = '40px sans-serif';
+  var t = Date.now() / 1000;
+  for (var i = 0; i < 3; i++) {
+    var sx = cx - 48 + i * 48;
+    var bounce = i < stars ? Math.sin(t * 2.5 + i * 0.7) * 3 : 0;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(i < stars ? '⭐' : '☆', sx, starY + bounce);
+  }
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText(stars === 3 ? '🏆 完美通关!' : stars === 2 ? '✨ 出色表现!' : '💪 成功通关!', cx, starY + 32);
+  // 数据面板
+  var panelY = starY + 58;
+  DrawUtils.roundRect(ctx, cardX + 20, panelY, cardW - 40, 110, 14, 'rgba(255,255,255,0.05)');
+  var lx = cardX + cardW * 0.30, rx = cardX + cardW * 0.70;
+  var row1Y = panelY + 28;
+  ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText(game.foundCount + '/' + game.catCount, lx, row1Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('🐱 猫咪', lx, row1Y + 20);
+  var mins = Math.floor(game.playTime / 60); var secs = Math.floor(game.playTime % 60);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = '#88ccff'; ctx.fillText(timeStr, rx, row1Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('⏱ 用时', rx, row1Y + 20);
+  var row2Y = row1Y + 52;
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ff8888'; ctx.fillText(game.mistakes.toString(), lx, row2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('❌ 失误', lx, row2Y + 18);
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = game.maxCombo >= 3 ? '#ffaa00' : '#88ddaa';
+  ctx.fillText(game.maxCombo > 0 ? game.maxCombo + 'x' : '-', rx, row2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('🔥 连击', rx, row2Y + 18);
+  // 邀请文字
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffcc66';
+  ctx.fillText('🏃 来挑战我吧!', cx, panelY + 138);
+  ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillText('变身躲猫猫 © 2026', cx, cardY + cardH - 14);
+  ctx.restore();
+  // 底部按钮
+  var btnY = cardY + cardH + 16;
+  var btnW = 140, btnH = 40, gap = 14;
+  var saveBtnX = cx - btnW - gap / 2;
+  var saveGrad = ctx.createLinearGradient(saveBtnX, btnY, saveBtnX, btnY + btnH);
+  saveGrad.addColorStop(0, '#43b581'); saveGrad.addColorStop(1, '#2d8b5e');
+  DrawUtils.roundRect(ctx, saveBtnX, btnY, btnW, btnH, 20, saveGrad);
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('💾 保存图片', saveBtnX + btnW / 2, btnY + btnH / 2);
+  game._shareCardSaveBtn = { x: saveBtnX, y: btnY, w: btnW, h: btnH };
+  var backBtnX = cx + gap / 2;
+  DrawUtils.roundRect(ctx, backBtnX, btnY, btnW, btnH, 20, 'rgba(255,255,255,0.12)');
+  ctx.fillStyle = '#bbb';
+  ctx.fillText('← 返回', backBtnX + btnW / 2, btnY + btnH / 2);
+  game._shareCardBackBtn = { x: backBtnX, y: btnY, w: btnW, h: btnH };
+}
+
+function saveShareCardAsImage() {
+  var canvas = game.canvas;
+  if (!canvas) return;
+  try {
+    var dataURL = canvas.toDataURL('image/png');
+    var link = document.createElement('a');
+    link.download = '躲猫猫成绩_' + ROOMS[game.currentRoomIdx].name + '_' + calcStars() + '星.png';
+    link.href = dataURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    game.toast = '图片已保存!'; game.toastTimer = 2.0;
+  } catch (e) {
+    game.toast = '保存失败，请截图分享'; game.toastTimer = 2.0;
   }
 }
 
 // ==================== 粒子 & 提示 ====================
 function spawnParticles(cx, cy) {
+  if (game.particles.length > 80) return;
   var symbols = ['⭐', '✨', '💛', '🐱', '❤️'];
   for (var i = 0; i < 12; i++) {
     var angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
@@ -3558,12 +3782,9 @@ function drawHint(ctx) {
 
 // ==================== 新手引导 ====================
 var TUT_STEPS = [
-  { id: 'observe',  text: '仔细看！有些物品在微微晃动...', sub: '那可能是猫咪伪装的！', duration: 0, waitTap: false },
-  { id: 'tap',      text: '点击那个晃动的物品！', sub: '👆 试试看', duration: 0, waitTap: true },
-  { id: 'found',    text: '太棒了！你找到了一只猫！🎉', sub: '', duration: 2.0, waitTap: false },
-  { id: 'clues',    text: '猫咪会露出4种破绽：', sub: '💫晃动  🐾尾巴  💬说话  👀偷看', duration: 0, waitTap: false },
-  { id: 'tools',    text: '左下角有道具帮助你：', sub: '🔦激光笔引猫注意  🌿猫薄荷让猫兴奋', duration: 0, waitTap: false },
-  { id: 'go',       text: '继续找出剩下的猫咪吧！', sub: '加油！', duration: 1.5, waitTap: false },
+  { id: 'observe', text: '观察房间，有东西在微微晃动...', sub: '', duration: 0, waitTap: false },
+  { id: 'tap',     text: '点击它！', sub: '', duration: 0, waitTap: true },
+  { id: 'found',   text: '太棒了！找到了！', sub: '继续找剩下的猫咪吧', duration: 2.0, waitTap: false },
 ];
 
 function updateTutorial(dt) {
@@ -3594,8 +3815,7 @@ function updateTutorial(dt) {
     }
   }
 
-  if (step.id === 'found' && tut.timer >= step.duration) { tut.step++; tut.timer = 0; }
-  if (step.id === 'go' && tut.timer >= step.duration) {
+  if (step.id === 'found' && tut.timer >= step.duration) {
     saveTutorialDone();
     game.tutorial = null;
     var cat = game.cats[0];
@@ -3612,68 +3832,93 @@ function drawTutorial(ctx) {
   var tut = game.tutorial;
   var step = TUT_STEPS[tut.step];
   if (!step) return;
+  var now = Date.now();
 
   ctx.save();
-  if (step.id === 'tap' && tut.tapTarget) {
-    var cat = tut.tapTarget;
-    var cx = cat.x + cat.w / 2, cy = cat.y + cat.h / 2;
-    var r = Math.max(cat.w, cat.h) * 0.65;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
-    ctx.arc(cx, cy, r, 0, Math.PI * 2, true); ctx.fill();
-    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
-    var fingerY = cy + r + 18 + Math.sin(Date.now() / 400) * 6;
-    ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillStyle = '#fff'; ctx.fillText('👆', cx, fingerY);
-  } else if (step.id === 'tools') {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
-    ctx.rect(5, VIEW_H - 80, 130, 70); ctx.fill('evenodd');
-    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')'; ctx.lineWidth = 2;
-    DrawUtils.roundRect(ctx, 5, VIEW_H - 80, 130, 70, 14, null, ctx.strokeStyle);
-  } else if (step.id === 'observe') {
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // --- 背景遮罩 + 目标高亮 ---
+  if (step.id === 'observe') {
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     var cat = game.cats[0];
     if (cat && !cat.found) {
-      var cx = cat.x + cat.w / 2, cy = cat.y - 15;
-      var bobY = Math.sin(Date.now() / 300) * 6;
-      ctx.font = '24px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = '#ffd700'; ctx.fillText('👇', cx, cy + bobY);
+      // 浮动手指指向猫
+      var bobY = Math.sin(now / 350) * 8;
+      ctx.save();
+      ctx.font = '32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(255,215,0,0.8)'; ctx.shadowBlur = 12;
+      ctx.fillText('👆', cat.x + cat.w / 2, cat.y - 10 + bobY);
+      ctx.restore();
     }
+  } else if (step.id === 'tap' && tut.tapTarget) {
+    var cat = tut.tapTarget;
+    var tcx = cat.x + cat.w / 2, tcy = cat.y + cat.h / 2;
+    var r = Math.max(cat.w, cat.h) * 0.65;
+    // 暗遮罩挖出圆形
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.arc(tcx, tcy, r, 0, Math.PI * 2, true); ctx.fill();
+    // 脉动高亮圈
+    var pulse = Math.sin(now / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse.toFixed(2) + ')'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(tcx, tcy, r + 4, 0, Math.PI * 2); ctx.stroke();
+    // 扩散圈
+    var expand = (now % 1200) / 1200;
+    ctx.strokeStyle = 'rgba(255,215,0,' + ((1 - expand) * 0.5).toFixed(2) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(tcx, tcy, r + 4 + expand * 18, 0, Math.PI * 2); ctx.stroke();
+    // 手指
+    var bobY2 = Math.sin(now / 350) * 8;
+    ctx.save();
+    ctx.font = '32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(255,215,0,0.8)'; ctx.shadowBlur = 12;
+    ctx.fillText('👆', tcx, tcy + r + 10 + bobY2);
+    ctx.restore();
+  } else if (step.id === 'found') {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   } else {
-    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
-  var textY = VIEW_H * 0.18;
-  var boxW = 460, boxH = step.sub ? 90 : 60;
-  var boxX = VIEW_W / 2 - boxW / 2;
-  DrawUtils.roundRect(ctx, boxX, textY, boxW, boxH, 18, 'rgba(0,0,0,0.8)');
-  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
-  DrawUtils.roundRect(ctx, boxX, textY, boxW, boxH, 18, null, 'rgba(255,215,0,0.5)');
-  ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // --- 分步气泡 ---
+  var bubbleW = 380, bubbleH = step.sub ? 85 : 55;
+  var bubbleX = VIEW_W / 2 - bubbleW / 2;
+  var bubbleY = VIEW_H * 0.15;
+  // 滑入动画
+  var slideT = Math.min(tut.timer / 0.3, 1);
+  bubbleY += (1 - slideT * slideT) * (-20);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4;
+  DrawUtils.roundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, 16, 'rgba(20,20,30,0.9)');
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(255,215,0,0.6)'; ctx.lineWidth = 1.5;
+  DrawUtils.roundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, 16, null, 'rgba(255,215,0,0.6)');
+  // 步骤指示点
+  var dotSpacing = 14, dotsW = (TUT_STEPS.length - 1) * dotSpacing;
+  var dotStartX = VIEW_W / 2 - dotsW / 2, dotY = bubbleY + bubbleH - 12;
+  for (var di = 0; di < TUT_STEPS.length; di++) {
+    ctx.beginPath(); ctx.arc(dotStartX + di * dotSpacing, dotY, di === tut.step ? 3.5 : 2, 0, Math.PI * 2);
+    ctx.fillStyle = di === tut.step ? '#ffd700' : 'rgba(255,255,255,0.3)'; ctx.fill();
+  }
+  // 主文字
+  ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffd700';
-  ctx.fillText(step.text, VIEW_W / 2, textY + (step.sub ? 28 : boxH / 2));
-  if (step.sub) {
-    ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd';
-    ctx.fillText(step.sub, VIEW_W / 2, textY + 58);
-  }
+  ctx.fillText(step.text, VIEW_W / 2, step.sub ? bubbleY + 28 : bubbleY + bubbleH / 2);
+  if (step.sub) { ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd'; ctx.fillText(step.sub, VIEW_W / 2, bubbleY + 55); }
+  ctx.restore();
 
+  // "点击继续"提示
   if (!step.waitTap && step.duration === 0) {
-    var alpha = 0.4 + Math.sin(Date.now() / 500) * 0.3;
+    var alpha = 0.4 + Math.sin(now / 500) * 0.3;
     ctx.globalAlpha = alpha;
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
-    ctx.fillText('点击任意处继续', VIEW_W / 2, textY + boxH + 20);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa'; ctx.textAlign = 'center';
+    ctx.fillText('点击任意处继续', VIEW_W / 2, bubbleY + bubbleH + 20);
     ctx.globalAlpha = 1;
   }
 
-  var skipX = VIEW_W - 80, skipY = textY - 30, skipW = 60, skipH = 28;
+  // 跳过按钮
+  var skipX = VIEW_W - 80, skipY = bubbleY - 30, skipW = 60, skipH = 28;
   ctx.globalAlpha = 0.6;
   DrawUtils.roundRect(ctx, skipX, skipY, skipW, skipH, 10, 'rgba(255,255,255,0.15)');
-  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center';
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('跳过', skipX + skipW / 2, skipY + skipH / 2);
   ctx.globalAlpha = 1;
   tut.skipBtn = { x: skipX, y: skipY, w: skipW, h: skipH };
@@ -3718,6 +3963,7 @@ function handleTouchStart(sx, sy) {
   game.touchStartY = v.y;
   game.touchStartTime = Date.now();
   game.isDragging = false;
+  game._lastTouchY = v.y;
 }
 
 function handleTouchMove(sx, sy) {
@@ -3725,6 +3971,16 @@ function handleTouchMove(sx, sy) {
   var dx = v.x - game.touchStartX;
   var dy = v.y - game.touchStartY;
   if (Math.abs(dx) > 5 || Math.abs(dy) > 5) game.isDragging = true;
+
+  // 图鉴/成就面板滚动
+  if (game.subScreen === 'codex' || game.subScreen === 'achieve') {
+    var prevY = game._lastTouchY || v.y;
+    var delta = prevY - v.y;
+    var scrollKey = game.subScreen === 'codex' ? 'codexScrollY' : 'achieveScrollY';
+    var maxKey = game.subScreen === 'codex' ? 'codexMaxScroll' : 'achieveMaxScroll';
+    game[scrollKey] = Math.max(0, Math.min(game[maxKey] || 0, (game[scrollKey] || 0) + delta));
+  }
+  game._lastTouchY = v.y;
 }
 
 function handleTouchEnd(sx, sy) {
@@ -3736,6 +3992,23 @@ function handleTouchEnd(sx, sy) {
 }
 
 function handleTap(vx, vy) {
+  // 分享卡片画面
+  if (game.subScreen === 'share_card') {
+    if (game._shareCardSaveBtn) {
+      var svb = game._shareCardSaveBtn;
+      if (vx >= svb.x && vx <= svb.x+svb.w && vy >= svb.y && vy <= svb.y+svb.h) {
+        SFX.tap(); saveShareCardAsImage(); return;
+      }
+    }
+    if (game._shareCardBackBtn) {
+      var bkb = game._shareCardBackBtn;
+      if (vx >= bkb.x && vx <= bkb.x+bkb.w && vy >= bkb.y && vy <= bkb.y+bkb.h) {
+        SFX.tap(); game.subScreen = null; return;
+      }
+    }
+    return;
+  }
+
   // 关卡选择画面
   if (game.state === 'ready') {
     handleLevelSelectTap(vx, vy);
@@ -3766,6 +4039,13 @@ function handleTap(vx, vy) {
         SFX.tap(); showLevelSelect(); return;
       }
     }
+    // 分享按钮
+    if (game.shareBtn) {
+      var shb = game.shareBtn;
+      if (vx >= shb.x && vx <= shb.x+shb.w && vy >= shb.y && vy <= shb.y+shb.h) {
+        SFX.tap(); game.subScreen = 'share_card'; return;
+      }
+    }
     return;
   }
 
@@ -3774,7 +4054,7 @@ function handleTap(vx, vy) {
     if (game.pauseResumeBtn) {
       var pr = game.pauseResumeBtn;
       if (vx >= pr.x && vx <= pr.x+pr.w && vy >= pr.y && vy <= pr.y+pr.h) {
-        SFX.tap(); game.paused = false; return;
+        SFX.tap(); game.paused = false; AmbientSound.startAmbient(ROOMS[game.currentRoomIdx].id); return;
       }
     }
     if (game.pauseRetryBtn) {
@@ -3796,7 +4076,7 @@ function handleTap(vx, vy) {
   if (game.pauseBtn && game.state === 'playing') {
     var pb = game.pauseBtn;
     if (vx >= pb.x && vx <= pb.x+pb.w && vy >= pb.y && vy <= pb.y+pb.h) {
-      SFX.tap(); game.paused = true; return;
+      SFX.tap(); game.paused = true; AmbientSound.stopAmbient(); return;
     }
   }
 
@@ -3882,13 +4162,12 @@ function handleTap(vx, vy) {
         spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
         game.shakeTimer = 0.15;
       }
-      if (game.combo >= 4) { unlockAchievement('combo_king'); saveAchievements(); }
+      if (game.combo >= 4) { unlockAchievement('combo_king'); }
     }
     // 成就：初次接触 + 累计猫数
     game.totalCatsFound++;
     unlockAchievement('first_cat');
     if (game.totalCatsFound >= 30) unlockAchievement('cat_master');
-    saveAchievements();
   } else {
     // 引导模式 tap 步骤：点错不扣血
     if (game.tutorial && game.tutorial.step === 1) {
@@ -3997,8 +4276,8 @@ function drawLevelSelectScreen(ctx) {
     var ccx = rx + cardW / 2;
     if (prog.unlocked) {
       // emoji
-      ctx.font = '32px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(room.emoji, ccx, ry + 30);
+      ctx.font = '36px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+      ctx.fillText(room.emoji, ccx, ry + 32);
       // 名称
       ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
       ctx.fillText(room.name, ccx, ry + 58);
@@ -4006,13 +4285,13 @@ function drawLevelSelectScreen(ctx) {
       ctx.font = '11px sans-serif'; ctx.fillStyle = '#aaa';
       ctx.fillText(room.desc, ccx, ry + 78);
       // 星星
-      ctx.font = '16px sans-serif';
+      ctx.font = '16px sans-serif'; ctx.fillStyle = '#fff';
       var starStr = '';
       for (var s = 0; s < 3; s++) starStr += s < prog.stars ? '⭐' : '☆';
       ctx.fillText(starStr, ccx, ry + 102);
     } else {
       // 锁
-      ctx.font = '24px sans-serif'; ctx.textAlign = 'center';
+      ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
       ctx.fillText('🔒', ccx, ry + 38);
       ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
       ctx.fillText(room.name, ccx, ry + 66);
@@ -4055,11 +4334,10 @@ function drawLevelSelectScreen(ctx) {
 }
 
 function drawAchieveSubScreen(ctx) {
-  // 全屏半透明遮罩
   ctx.fillStyle = 'rgba(0,0,0,0.70)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  var panelW = 340, panelH = 400;
+  var panelW = 340, panelH = Math.min(420, VIEW_H - 80);
   var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
   DrawUtils.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(15,15,30,0.95)');
   ctx.strokeStyle = 'rgba(255,215,0,0.4)'; ctx.lineWidth = 2;
@@ -4075,10 +4353,26 @@ function drawAchieveSubScreen(ctx) {
   ctx.fillText('✕', px + panelW - 16, py + 24);
   game.subCloseBtn = { x: px + panelW - 40, y: py + 8, w: 36, h: 32 };
 
-  // 成就网格
+  // 可滚动内容区域
+  var headerH = 48;
+  var contentTop = py + headerH;
+  var contentH = panelH - headerH - 12;
+  var scrollY = game.achieveScrollY || 0;
+
   var cols = 2, itemW = 148, itemH = 70, gapX = 10, gapY = 10;
+  var rows = Math.ceil(ACHIEVEMENTS.length / cols);
+  var totalContentH = rows * (itemH + gapY) - gapY + 12;
+  game.achieveMaxScroll = Math.max(0, totalContentH - contentH);
+  if (scrollY > game.achieveMaxScroll) { scrollY = game.achieveMaxScroll; game.achieveScrollY = scrollY; }
+
+  // 裁剪
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px + 4, contentTop, panelW - 8, contentH);
+  ctx.clip();
+
   var gridX = px + (panelW - cols * itemW - gapX) / 2;
-  var gridY = py + 50;
+  var gridY = contentTop + 6 - scrollY;
 
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ACHIEVEMENTS.forEach(function(a, i) {
@@ -4086,6 +4380,8 @@ function drawAchieveSubScreen(ctx) {
     var col = i % cols, row = Math.floor(i / cols);
     var ix = gridX + col * (itemW + gapX);
     var iy = gridY + row * (itemH + gapY);
+
+    if (iy + itemH < contentTop - 10 || iy > contentTop + contentH + 10) return;
 
     ctx.save();
     if (!done) ctx.globalAlpha = 0.4;
@@ -4096,21 +4392,30 @@ function drawAchieveSubScreen(ctx) {
     DrawUtils.roundRect(ctx, ix, iy, itemW, itemH, 10, null, border);
 
     var icx = ix + itemW / 2;
-    ctx.font = '22px sans-serif';
-    ctx.fillText(done ? a.icon : '🔒', icx, iy + 20);
+    ctx.font = '26px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText(done ? a.icon : '🔒', icx, iy + 22);
     ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#fff';
     ctx.fillText(a.name, icx, iy + 42);
     ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa';
     ctx.fillText(a.desc, icx, iy + 58);
     ctx.restore();
   });
+  ctx.restore();
+
+  // 滚动条
+  if (game.achieveMaxScroll > 0) {
+    var trackH = contentH - 8;
+    var thumbH = Math.max(24, trackH * contentH / totalContentH);
+    var thumbY = contentTop + 4 + (trackH - thumbH) * (scrollY / game.achieveMaxScroll);
+    DrawUtils.roundRect(ctx, px + panelW - 10, thumbY, 4, thumbH, 2, 'rgba(255,255,255,0.25)');
+  }
 }
 
 function drawCodexSubScreen(ctx) {
   ctx.fillStyle = 'rgba(0,0,0,0.70)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  var panelW = 350, panelH = 440;
+  var panelW = 350, panelH = Math.min(480, VIEW_H - 80);
   var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
   DrawUtils.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(10,15,30,0.96)');
   ctx.strokeStyle = 'rgba(100,200,255,0.4)'; ctx.lineWidth = 2;
@@ -4137,28 +4442,50 @@ function drawCodexSubScreen(ctx) {
   ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
   ctx.fillText(pct + '%', barX + barW / 2, barY + barH / 2);
 
-  // 按房间列出图鉴
-  var curY = py + 72;
+  // 可滚动内容区域（留8px上下内边距）
+  var headerH = 70;
+  var contentTop = py + headerH;
+  var contentH = panelH - headerH - 12;
+  var scrollY = game.codexScrollY || 0;
+
+  // 先计算总内容高度
+  var itemW = 72, itemH = 48, gapX = 8, gridCols = 4;
+  var totalContentH = 0;
+  CODEX_ROOMS.forEach(function(room) {
+    totalContentH += 20; // 房间标题
+    var dRows = Math.ceil(room.disguises.length / gridCols);
+    totalContentH += dRows * (itemH + 6) + 12;
+  });
+  game.codexMaxScroll = Math.max(0, totalContentH - contentH);
+  if (scrollY > game.codexMaxScroll) { scrollY = game.codexMaxScroll; game.codexScrollY = scrollY; }
+
+  // 裁剪可滚动区域
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px + 4, contentTop, panelW - 8, contentH);
+  ctx.clip();
+
+  var curY = contentTop + 6 - scrollY;
   ctx.textBaseline = 'middle';
+  var gridStartX = px + (panelW - gridCols * itemW - (gridCols - 1) * gapX) / 2;
+
   CODEX_ROOMS.forEach(function(room) {
     var roomFound = 0;
     room.disguises.forEach(function(d) { if (codex[d.id]) roomFound++; });
 
     ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'left';
-    ctx.fillText(room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')', px + 16, curY);
-    curY += 18;
-
-    // 物品网格（每行4个）
-    var itemW = 72, itemH = 48, gapX = 8;
-    var gridCols = 4;
-    var gridStartX = px + (panelW - gridCols * itemW - (gridCols - 1) * gapX) / 2;
+    ctx.fillText(room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')', px + 16, curY + 6);
+    curY += 20;
 
     room.disguises.forEach(function(d, di) {
       var col = di % gridCols, row = Math.floor(di / gridCols);
       var ix = gridStartX + col * (itemW + gapX);
       var iy = curY + row * (itemH + 6);
-      var found = !!codex[d.id];
 
+      // 跳过完全不可见的卡片
+      if (iy + itemH < contentTop - 10 || iy > contentTop + contentH + 10) return;
+
+      var found = !!codex[d.id];
       ctx.save();
       if (!found) ctx.globalAlpha = 0.35;
       var bg = found ? 'rgba(100,200,255,0.1)' : 'rgba(255,255,255,0.03)';
@@ -4168,16 +4495,25 @@ function drawCodexSubScreen(ctx) {
       DrawUtils.roundRect(ctx, ix, iy, itemW, itemH, 8, null, border);
 
       ctx.textAlign = 'center';
-      ctx.font = '18px sans-serif';
-      ctx.fillText(found ? d.emoji : '❓', ix + itemW / 2, iy + 18);
+      ctx.font = '22px sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText(found ? '🐱' : '❓', ix + itemW / 2, iy + 18);
       ctx.font = '9px sans-serif'; ctx.fillStyle = found ? '#ccc' : '#666';
       ctx.fillText(found ? d.name : '???', ix + itemW / 2, iy + 38);
       ctx.restore();
     });
 
     var dRows = Math.ceil(room.disguises.length / gridCols);
-    curY += dRows * (itemH + 6) + 10;
+    curY += dRows * (itemH + 6) + 12;
   });
+  ctx.restore();
+
+  // 滚动条指示器
+  if (game.codexMaxScroll > 0) {
+    var trackH = contentH - 8;
+    var thumbH = Math.max(24, trackH * contentH / totalContentH);
+    var thumbY = contentTop + 4 + (trackH - thumbH) * (scrollY / game.codexMaxScroll);
+    DrawUtils.roundRect(ctx, px + panelW - 10, thumbY, 4, thumbH, 2, 'rgba(255,255,255,0.25)');
+  }
 }
 
 function handleLevelSelectTap(vx, vy) {
@@ -4207,7 +4543,7 @@ function handleLevelSelectTap(vx, vy) {
   if (game.achieveBtnRect) {
     var ab = game.achieveBtnRect;
     if (vx >= ab.x && vx <= ab.x+ab.w && vy >= ab.y && vy <= ab.y+ab.h) {
-      SFX.tap(); game.subScreen = 'achieve'; return;
+      SFX.tap(); game.subScreen = 'achieve'; game.achieveScrollY = 0; return;
     }
   }
 
@@ -4215,121 +4551,11 @@ function handleLevelSelectTap(vx, vy) {
   if (game.codexBtnRect) {
     var cb2 = game.codexBtnRect;
     if (vx >= cb2.x && vx <= cb2.x+cb2.w && vy >= cb2.y && vy <= cb2.y+cb2.h) {
-      SFX.tap(); game.subScreen = 'codex'; return;
+      SFX.tap(); game.subScreen = 'codex'; game.codexScrollY = 0; return;
     }
   }
 }
 
-function showAchievementPanel() {
-  var existing = document.getElementById('achievePanel');
-  if (existing) { existing.remove(); return; }
-
-  var panel = document.createElement('div');
-  panel.id = 'achievePanel';
-  panel.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:340px;max-height:80vh;overflow-y:auto;background:rgba(15,15,30,0.95);border:2px solid rgba(255,215,0,0.4);border-radius:16px;padding:20px;z-index:20;';
-
-  var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
-    '<span style="color:#ffd700;font-weight:bold;font-size:18px;">🏆 成就墙</span>' +
-    '<span id="achieveClose" style="color:#999;font-size:20px;cursor:pointer;padding:4px 8px;">✕</span></div>';
-
-  var grid = '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
-  ACHIEVEMENTS.forEach(function(a) {
-    var done = !!game.achievements[a.id];
-    var opacity = done ? '1' : '0.4';
-    var border = done ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.1)';
-    var bg = done ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.05)';
-    grid += '<div style="width:148px;padding:12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';text-align:center;opacity:' + opacity + ';">' +
-      '<div style="font-size:28px;">' + (done ? a.icon : '🔒') + '</div>' +
-      '<div style="color:#fff;font-size:12px;font-weight:bold;margin:4px 0 2px;">' + a.name + '</div>' +
-      '<div style="color:#aaa;font-size:11px;">' + a.desc + '</div></div>';
-  });
-  grid += '</div>';
-
-  panel.innerHTML = header + grid;
-  document.getElementById('startScreen').appendChild(panel);
-  document.getElementById('achieveClose').addEventListener('click', function() { panel.remove(); });
-}
-
-function showCodexPanel() {
-  var existing = document.getElementById('codexPanel');
-  if (existing) { existing.remove(); return; }
-
-  var panel = document.createElement('div');
-  panel.id = 'codexPanel';
-  panel.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:360px;max-height:85vh;overflow-y:auto;background:rgba(10,15,30,0.96);border:2px solid rgba(100,200,255,0.4);border-radius:16px;padding:20px;z-index:20;';
-
-  var cc = getCodexCount();
-
-  // Header
-  var headerDiv = document.createElement('div');
-  headerDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;';
-  var titleSpan = document.createElement('span');
-  titleSpan.style.cssText = 'color:#88ccff;font-weight:bold;font-size:18px;';
-  titleSpan.textContent = '\uD83D\uDCD6 猫咪图鉴 ' + cc.found + '/' + cc.total;
-  var closeBtn = document.createElement('span');
-  closeBtn.style.cssText = 'color:#999;font-size:20px;cursor:pointer;padding:4px 8px;';
-  closeBtn.textContent = '\u2715';
-  closeBtn.addEventListener('click', function() { panel.remove(); });
-  headerDiv.appendChild(titleSpan);
-  headerDiv.appendChild(closeBtn);
-  panel.appendChild(headerDiv);
-
-  // Rooms
-  CODEX_ROOMS.forEach(function(room) {
-    var roomFound = 0;
-    room.disguises.forEach(function(d) { if (codex[d.id]) roomFound++; });
-
-    var section = document.createElement('div');
-    section.style.cssText = 'margin-bottom:16px;';
-
-    var roomTitle = document.createElement('div');
-    roomTitle.style.cssText = 'color:#ffd700;font-size:13px;font-weight:bold;margin-bottom:8px;';
-    roomTitle.textContent = room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')';
-    section.appendChild(roomTitle);
-
-    var grid = document.createElement('div');
-    grid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;';
-
-    room.disguises.forEach(function(d) {
-      var found = !!codex[d.id];
-      var card = document.createElement('div');
-      card.style.cssText = 'width:70px;padding:8px 4px;border-radius:8px;text-align:center;' +
-        'border:1px solid ' + (found ? 'rgba(100,200,255,0.3)' : 'rgba(255,255,255,0.08)') + ';' +
-        'background:' + (found ? 'rgba(100,200,255,0.1)' : 'rgba(255,255,255,0.03)') + ';' +
-        'opacity:' + (found ? '1' : '0.35') + ';';
-
-      var icon = document.createElement('div');
-      icon.style.cssText = 'font-size:22px;';
-      icon.textContent = found ? '\uD83D\uDC31' : '\u2753';
-      card.appendChild(icon);
-
-      var label = document.createElement('div');
-      label.style.cssText = 'font-size:10px;margin-top:2px;color:' + (found ? '#ccc' : '#666') + ';';
-      label.textContent = found ? d.name : '???';
-      card.appendChild(label);
-
-      grid.appendChild(card);
-    });
-
-    section.appendChild(grid);
-    panel.appendChild(section);
-  });
-
-  // Progress bar
-  var pct = cc.total > 0 ? Math.round(cc.found / cc.total * 100) : 0;
-  var barOuter = document.createElement('div');
-  barOuter.style.cssText = 'margin-top:12px;background:rgba(255,255,255,0.08);border-radius:8px;height:20px;overflow:hidden;position:relative;';
-  var barInner = document.createElement('div');
-  barInner.style.cssText = 'height:100%;width:' + pct + '%;background:linear-gradient(90deg,#4488cc,#88ccff);border-radius:8px;';
-  var barText = document.createElement('div');
-  barText.style.cssText = 'position:absolute;top:0;left:0;right:0;text-align:center;line-height:20px;font-size:11px;color:#fff;font-weight:bold;';
-  barText.textContent = pct + '%';
-  barOuter.appendChild(barInner);
-  barOuter.appendChild(barText);
-  panel.appendChild(barOuter);
-
-  document.getElementById('startScreen').appendChild(panel);
-}
 
 function startLevel(idx) {
   initGame(idx);
@@ -4337,6 +4563,7 @@ function startLevel(idx) {
 }
 
 function showLevelSelect() {
+  AmbientSound.stopAmbient();
   game.state = 'ready';
   game.subScreen = null;
   // 保持游戏循环运行以渲染关卡选择画面

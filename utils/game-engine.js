@@ -201,6 +201,8 @@ GameEngine.prototype._unlockAchievement = function(id) {
 };
 
 GameEngine.prototype.startGame = function(roomIdx) {
+  // 停止旧循环，防止多重 RAF 叠加
+  this.stop();
   if (roomIdx !== undefined) this.currentRoomIdx = roomIdx;
   var room = scene.ROOMS[this.currentRoomIdx];
   var mult = room.behaviorMult;
@@ -237,6 +239,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.hintAlpha = 0;
   this._lastFoundTime = 0;
   this.particles = [];
+  this.achievePopup = null;
   this.envEvent = null;
   this.envEventCooldown = 10 + Math.random() * 8;
   this._usedLaser = false;
@@ -323,12 +326,13 @@ GameEngine.prototype.startGame = function(roomIdx) {
 
 GameEngine.prototype._startLoop = function() {
   this._running = true;
+  this._useRAF = !!this.ctx.requestAnimationFrame;
   var self = this;
   function loop() {
     if (!self._running) return;
     self._update();
     self._render();
-    if (self.ctx.requestAnimationFrame) {
+    if (self._useRAF) {
       self._rafId = self.ctx.requestAnimationFrame(loop);
     } else {
       self._rafId = setTimeout(loop, 16);
@@ -340,7 +344,7 @@ GameEngine.prototype._startLoop = function() {
 GameEngine.prototype.stop = function() {
   this._running = false;
   if (this._rafId != null) {
-    if (this.ctx.cancelAnimationFrame) {
+    if (this._useRAF && this.ctx.cancelAnimationFrame) {
       this.ctx.cancelAnimationFrame(this._rafId);
     } else {
       clearTimeout(this._rafId);
@@ -364,7 +368,7 @@ GameEngine.prototype._update = function() {
     this.introTimer -= dt;
     var curSec = Math.ceil(this.introTimer);
     if (curSec !== prevSec && curSec > 0 && curSec <= 3) SFX.tick();
-    if (this.introTimer <= 0) {
+    if (this.introTimer <= -0.5) {
       this.state = 'playing';
       var rm = scene.ROOMS[this.currentRoomIdx];
       this.toast = rm.emoji + ' ' + rm.name + ' — 找出' + rm.catCount + '只猫!';
@@ -789,9 +793,12 @@ GameEngine.prototype._render = function() {
       ctx.restore();
     } else {
       var cdElapsed = elapsed - 1.5;
-      var cd = Math.ceil(this.introTimer);
+      var cd = Math.min(3, Math.ceil(this.introTimer));
       var cdText = cd > 0 ? cd.toString() : 'GO!';
-      var cdFrac = cdElapsed % 1.0;
+      var cdFrac;
+      if (cd <= 0) { cdFrac = -this.introTimer; }
+      else if (cd >= 3) { cdFrac = cdElapsed; }
+      else { cdFrac = cdElapsed - (3.5 - cd); }
       var cdScale = cdFrac < 0.15 ? easeOutBack(cdFrac / 0.15) : 1;
       var cdAlpha = cdFrac < 0.1 ? cdFrac / 0.1 : 1;
       ctx.save(); ctx.globalAlpha = cdAlpha;
@@ -1185,11 +1192,11 @@ GameEngine.prototype._drawHUD = function(ctx) {
   // 暂停按钮
   ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('⏸', VIEW_W - 56, 68);
-  this.pauseBtn = { x: VIEW_W - 72, y: 56, w: 32, h: 24 };
+  this.pauseBtn = { x: VIEW_W - 78, y: 46, w: 44, h: 44 };
   // 音量按钮
   var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
   ctx.fillText(muteIcon, VIEW_W - 22, 68);
-  this.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
+  this.muteBtn = { x: VIEW_W - 44, y: 46, w: 44, h: 44 };
 };
 
 // ========== 关卡选择画面 ==========
@@ -1245,18 +1252,18 @@ GameEngine.prototype._drawLevelSelectScreen = function(ctx) {
 
     var ccx = rx + cardW / 2;
     if (prog.unlocked) {
-      ctx.font = '32px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(room.emoji, ccx, ry + 30);
+      ctx.font = '36px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+      ctx.fillText(room.emoji, ccx, ry + 32);
       ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
       ctx.fillText(room.name, ccx, ry + 58);
       ctx.font = '11px sans-serif'; ctx.fillStyle = '#aaa';
       ctx.fillText(room.desc, ccx, ry + 78);
-      ctx.font = '16px sans-serif';
+      ctx.font = '16px sans-serif'; ctx.fillStyle = '#fff';
       var starStr = '';
       for (var s = 0; s < 3; s++) starStr += s < prog.stars ? '⭐' : '☆';
       ctx.fillText(starStr, ccx, ry + 102);
     } else {
-      ctx.font = '24px sans-serif'; ctx.textAlign = 'center';
+      ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
       ctx.fillText('🔒', ccx, ry + 38);
       ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
       ctx.fillText(room.name, ccx, ry + 66);
@@ -1298,7 +1305,7 @@ GameEngine.prototype._drawAchieveSubScreen = function(ctx) {
   ctx.fillStyle = 'rgba(0,0,0,0.70)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  var panelW = 340, panelH = 400;
+  var panelW = 340, panelH = Math.min(420, VIEW_H - 80);
   var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
   draw.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(15,15,30,0.95)');
   ctx.strokeStyle = 'rgba(255,215,0,0.4)'; ctx.lineWidth = 2;
@@ -1311,9 +1318,24 @@ GameEngine.prototype._drawAchieveSubScreen = function(ctx) {
   ctx.fillText('✕', px + panelW - 16, py + 24);
   this.subCloseBtn = { x: px + panelW - 40, y: py + 8, w: 36, h: 32 };
 
+  var headerH = 48;
+  var contentTop = py + headerH;
+  var contentH = panelH - headerH - 12;
+  var scrollY = this.achieveScrollY || 0;
+
   var cols = 2, itemW = 148, itemH = 70, gapX = 10, gapY = 10;
+  var rows = Math.ceil(ACHIEVEMENTS.length / cols);
+  var totalContentH = rows * (itemH + gapY) - gapY + 12;
+  this.achieveMaxScroll = Math.max(0, totalContentH - contentH);
+  if (scrollY > this.achieveMaxScroll) { scrollY = this.achieveMaxScroll; this.achieveScrollY = scrollY; }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px + 4, contentTop, panelW - 8, contentH);
+  ctx.clip();
+
   var gridX = px + (panelW - cols * itemW - gapX) / 2;
-  var gridY = py + 50;
+  var gridY = contentTop + 6 - scrollY;
   var self = this;
 
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1322,6 +1344,7 @@ GameEngine.prototype._drawAchieveSubScreen = function(ctx) {
     var col = i % cols, row = Math.floor(i / cols);
     var ix = gridX + col * (itemW + gapX);
     var iy = gridY + row * (itemH + gapY);
+    if (iy + itemH < contentTop - 10 || iy > contentTop + contentH + 10) return;
     ctx.save();
     if (!done) ctx.globalAlpha = 0.4;
     draw.roundRect(ctx, ix, iy, itemW, itemH, 10, done ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.05)');
@@ -1329,18 +1352,26 @@ GameEngine.prototype._drawAchieveSubScreen = function(ctx) {
     ctx.strokeStyle = border; ctx.lineWidth = 1;
     draw.roundRect(ctx, ix, iy, itemW, itemH, 10, null, border);
     var icx = ix + itemW / 2;
-    ctx.font = '22px sans-serif'; ctx.fillText(done ? a.icon : '🔒', icx, iy + 20);
+    ctx.font = '26px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(done ? a.icon : '🔒', icx, iy + 22);
     ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(a.name, icx, iy + 42);
     ctx.font = '10px sans-serif'; ctx.fillStyle = '#aaa'; ctx.fillText(a.desc, icx, iy + 58);
     ctx.restore();
   });
+  ctx.restore();
+
+  if (this.achieveMaxScroll > 0) {
+    var trackH = contentH - 8;
+    var thumbH = Math.max(24, trackH * contentH / totalContentH);
+    var thumbY = contentTop + 4 + (trackH - thumbH) * (scrollY / this.achieveMaxScroll);
+    draw.roundRect(ctx, px + panelW - 10, thumbY, 4, thumbH, 2, 'rgba(255,255,255,0.25)');
+  }
 };
 
 GameEngine.prototype._drawCodexSubScreen = function(ctx) {
   ctx.fillStyle = 'rgba(0,0,0,0.70)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  var panelW = 350, panelH = 440;
+  var panelW = 350, panelH = Math.min(480, VIEW_H - 80);
   var px = (VIEW_W - panelW) / 2, py = (VIEW_H - panelH) / 2;
   draw.roundRect(ctx, px, py, panelW, panelH, 16, 'rgba(10,15,30,0.96)');
   ctx.strokeStyle = 'rgba(100,200,255,0.4)'; ctx.lineWidth = 2;
@@ -1361,25 +1392,48 @@ GameEngine.prototype._drawCodexSubScreen = function(ctx) {
   ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
   ctx.fillText(pct + '%', barX + barW / 2, barY + barH / 2);
 
-  var curY = py + 72;
+  // 可滚动内容区域
+  var headerH = 70;
+  var contentTop = py + headerH;
+  var contentH = panelH - headerH - 12;
+  var scrollY = this.codexScrollY || 0;
+
   var CROOMS = codexMod.CODEX_ROOMS;
   var codexData = codexMod.getData();
+  var itemW = 72, itemH = 48, gapX2 = 8, gridCols = 4;
+
+  // 计算总内容高度
+  var totalContentH = 0;
+  CROOMS.forEach(function(room) {
+    totalContentH += 20;
+    var dRows = Math.ceil(room.disguises.length / gridCols);
+    totalContentH += dRows * (itemH + 6) + 12;
+  });
+  this.codexMaxScroll = Math.max(0, totalContentH - contentH);
+  if (scrollY > this.codexMaxScroll) { scrollY = this.codexMaxScroll; this.codexScrollY = scrollY; }
+
+  // 裁剪可滚动区域
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px + 4, contentTop, panelW - 8, contentH);
+  ctx.clip();
+
+  var curY = contentTop + 6 - scrollY;
   ctx.textBaseline = 'middle';
+  var gridStartX = px + (panelW - gridCols * itemW - (gridCols - 1) * gapX2) / 2;
 
   CROOMS.forEach(function(room) {
     var roomFound = 0;
     room.disguises.forEach(function(d) { if (codexData[d.id]) roomFound++; });
     ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'left';
-    ctx.fillText(room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')', px + 16, curY);
-    curY += 18;
-
-    var itemW = 72, itemH = 48, gapX2 = 8, gridCols = 4;
-    var gridStartX = px + (panelW - gridCols * itemW - (gridCols - 1) * gapX2) / 2;
+    ctx.fillText(room.emoji + ' ' + room.name + ' (' + roomFound + '/' + room.disguises.length + ')', px + 16, curY + 6);
+    curY += 20;
 
     room.disguises.forEach(function(d, di) {
       var col = di % gridCols, row = Math.floor(di / gridCols);
       var ix = gridStartX + col * (itemW + gapX2);
       var iy = curY + row * (itemH + 6);
+      if (iy + itemH < contentTop - 10 || iy > contentTop + contentH + 10) return;
       var found = !!codexData[d.id];
       ctx.save();
       if (!found) ctx.globalAlpha = 0.35;
@@ -1388,15 +1442,24 @@ GameEngine.prototype._drawCodexSubScreen = function(ctx) {
       ctx.strokeStyle = bdr; ctx.lineWidth = 1;
       draw.roundRect(ctx, ix, iy, itemW, itemH, 8, null, bdr);
       ctx.textAlign = 'center';
-      ctx.font = '18px sans-serif'; ctx.fillText(found ? d.emoji : '❓', ix + itemW / 2, iy + 18);
+      ctx.font = '22px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(found ? '🐱' : '❓', ix + itemW / 2, iy + 18);
       ctx.font = '9px sans-serif'; ctx.fillStyle = found ? '#ccc' : '#666';
       ctx.fillText(found ? d.name : '???', ix + itemW / 2, iy + 38);
       ctx.restore();
     });
 
     var dRows = Math.ceil(room.disguises.length / gridCols);
-    curY += dRows * (itemH + 6) + 10;
+    curY += dRows * (itemH + 6) + 12;
   });
+  ctx.restore();
+
+  // 滚动条指示器
+  if (this.codexMaxScroll > 0) {
+    var trackH = contentH - 8;
+    var thumbH = Math.max(24, trackH * contentH / totalContentH);
+    var thumbY = contentTop + 4 + (trackH - thumbH) * (scrollY / this.codexMaxScroll);
+    draw.roundRect(ctx, px + panelW - 10, thumbY, 4, thumbH, 2, 'rgba(255,255,255,0.25)');
+  }
 };
 
 GameEngine.prototype._handleLevelSelectTap = function(vx, vy) {
@@ -1423,14 +1486,14 @@ GameEngine.prototype._handleLevelSelectTap = function(vx, vy) {
   if (this.achieveBtnRect) {
     var ab = this.achieveBtnRect;
     if (vx >= ab.x && vx <= ab.x+ab.w && vy >= ab.y && vy <= ab.y+ab.h) {
-      SFX.tap(); this.subScreen = 'achieve'; return;
+      SFX.tap(); this.subScreen = 'achieve'; this.achieveScrollY = 0; return;
     }
   }
 
   if (this.codexBtnRect) {
     var cb2 = this.codexBtnRect;
     if (vx >= cb2.x && vx <= cb2.x+cb2.w && vy >= cb2.y && vy <= cb2.y+cb2.h) {
-      SFX.tap(); this.subScreen = 'codex'; return;
+      SFX.tap(); this.subScreen = 'codex'; this.codexScrollY = 0; return;
     }
   }
 };
@@ -2002,6 +2065,7 @@ GameEngine.prototype._handleTutorialTap = function(vx, vy) {
 // ========== 粒子 & 提示 ==========
 
 GameEngine.prototype._spawnParticles = function(cx, cy) {
+  if (this.particles.length > 80) return;
   var symbols = ['⭐', '✨', '💛', '🐱', '❤️'];
   for (var i = 0; i < 12; i++) {
     var angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
@@ -2060,6 +2124,7 @@ GameEngine.prototype.handleTouchStart = function(x, y) {
   this._touchStartY = vy;
   this._touchStartTime = Date.now();
   this._isDragging = false;
+  this._lastTouchY = vy;
 };
 
 GameEngine.prototype.handleTouchMove = function(x, y) {
@@ -2068,6 +2133,18 @@ GameEngine.prototype.handleTouchMove = function(x, y) {
   var dx = vx - this._touchStartX;
   var dy = vy - this._touchStartY;
   if (Math.abs(dx) > 5 || Math.abs(dy) > 5) this._isDragging = true;
+
+  // 子面板滚动
+  if (this.subScreen === 'codex' || this.subScreen === 'achieve') {
+    var prevY = this._lastTouchY || vy;
+    var delta = prevY - vy;
+    if (this.subScreen === 'codex') {
+      this.codexScrollY = Math.max(0, Math.min(this.codexMaxScroll || 0, (this.codexScrollY || 0) + delta));
+    } else {
+      this.achieveScrollY = Math.max(0, Math.min(this.achieveMaxScroll || 0, (this.achieveScrollY || 0) + delta));
+    }
+  }
+  this._lastTouchY = vy;
 };
 
 GameEngine.prototype.handleTouchEnd = function(x, y) {
@@ -2223,13 +2300,12 @@ GameEngine.prototype._handleTap = function(vx, vy) {
         this._spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
         this.shakeTimer = 0.15;
       }
-      if (this.combo >= 4) { this._unlockAchievement('combo_king'); this._saveAchievements(); }
+      if (this.combo >= 4) { this._unlockAchievement('combo_king'); }
     }
     // 成就：初次接触 + 累计猫数
     this.totalCatsFound++;
     this._unlockAchievement('first_cat');
     if (this.totalCatsFound >= 30) this._unlockAchievement('cat_master');
-    this._saveAchievements();
   } else {
     // 引导模式 tap 步骤：点错不扣血，提示重试
     if (this.tutorial && this.tutorial.step === 1) {
