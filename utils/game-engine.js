@@ -205,7 +205,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.currentFoundCat = null;
   this.wrongItem = null;
   this.shakeTimer = 0;
-  this.introTimer = 2.5;
+  this.introTimer = 5.0;
   this.fakeWobbles = [];
   this.fakeWobbleTimer = 5 + Math.random() * 5;
   this.activeTool = null;
@@ -347,7 +347,7 @@ GameEngine.prototype._update = function() {
     var prevSec = Math.ceil(this.introTimer);
     this.introTimer -= dt;
     var curSec = Math.ceil(this.introTimer);
-    if (curSec !== prevSec && curSec > 0) SFX.tick();
+    if (curSec !== prevSec && curSec > 0 && curSec <= 3) SFX.tick();
     if (this.introTimer <= 0) {
       this.state = 'playing';
       var rm = scene.ROOMS[this.currentRoomIdx];
@@ -739,7 +739,7 @@ GameEngine.prototype._render = function() {
 
   // 开场
   if (this.state === 'intro') {
-    var total = 2.5, elapsed = total - this.introTimer;
+    var total = 5.0, elapsed = total - this.introTimer;
     var room = scene.ROOMS[this.currentRoomIdx];
     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

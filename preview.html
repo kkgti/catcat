@@ -1747,7 +1747,7 @@ function initGame(roomIdx) {
   game.toast = ''; game.toastTimer = 0;
   game.animTimer = 0; game.currentFoundCat = null;
   game.wrongItem = null; game.shakeTimer = 0;
-  game.introTimer = 2.5;
+  game.introTimer = 5.0;
   game.fakeWobbles = [];
   game.fakeWobbleTimer = 5 + Math.random() * 5;
   game.activeTool = null; game.retryBtn = null; game.nextLevelBtn = null; game.selectBtn = null;
@@ -1903,7 +1903,7 @@ function update() {
     var prevSec = Math.ceil(game.introTimer);
     game.introTimer -= dt;
     var curSec = Math.ceil(game.introTimer);
-    if (curSec !== prevSec && curSec > 0) SFX.tick();
+    if (curSec !== prevSec && curSec > 0 && curSec <= 3) SFX.tick();
     if (game.introTimer <= 0) {
       game.state = 'playing';
       var rm = ROOMS[game.currentRoomIdx];
@@ -2828,9 +2828,9 @@ function render() {
   ctx.save();
   ctx.scale(s*dpr, s*dpr);
 
-  // 开场动画（两阶段：1.5秒展示 + 1秒倒计时）
+  // 开场动画（两阶段：1.5秒展示 + 3.5秒倒计时）
   if (game.state === 'intro') {
-    var total = 2.5, elapsed = total - game.introTimer;
+    var total = 5.0, elapsed = total - game.introTimer;
     var room = ROOMS[game.currentRoomIdx];
     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
