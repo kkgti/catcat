@@ -1588,6 +1588,8 @@ var game = {
   _usedLaser: false,
   _usedCatnip: false,
   _hintTriggered: false,
+  // 过渡动画
+  transTimer: 0,
   // 连击系统
   combo: 0,
   maxCombo: 0,
@@ -1966,17 +1968,10 @@ function update() {
       if (game.currentFoundCat) game.currentFoundCat.foundAnim = 1;
       game.currentFoundCat = null;
       if (game.foundCount >= game.cats.length) {
-        game.state = 'win';
+        // 进入胜利过渡动画
+        game.state = 'win_trans';
+        game.transTimer = 1.5;
         SFX.win();
-        // 保存进度
-        var stars = calcStars();
-        var pid = ROOMS[game.currentRoomIdx].id;
-        if (stars > levelProgress[pid].stars) levelProgress[pid].stars = stars;
-        if (game.currentRoomIdx < ROOMS.length - 1) {
-          levelProgress[ROOMS[game.currentRoomIdx + 1].id].unlocked = true;
-        }
-        saveProgress();
-        checkWinAchievements(stars);
       } else {
         game.state = 'playing';
       }
@@ -1988,9 +1983,38 @@ function update() {
     game.wrongAnimTimer -= dt;
     if (game.wrongAnimTimer <= 0) {
       game.wrongItem = null;
-      var nextState = game.lives <= 0 ? 'lose' : 'playing';
-      if (nextState === 'lose') SFX.lose();
-      game.state = nextState;
+      if (game.lives <= 0) {
+        game.state = 'lose_trans';
+        game.transTimer = 1.0;
+        SFX.lose();
+      } else {
+        game.state = 'playing';
+      }
+    }
+  }
+
+  // 胜利过渡动画
+  if (game.state === 'win_trans') {
+    game.transTimer -= dt;
+    if (game.transTimer <= 0) {
+      game.state = 'win';
+      // 保存进度
+      var stars = calcStars();
+      var pid = ROOMS[game.currentRoomIdx].id;
+      if (stars > levelProgress[pid].stars) levelProgress[pid].stars = stars;
+      if (game.currentRoomIdx < ROOMS.length - 1) {
+        levelProgress[ROOMS[game.currentRoomIdx + 1].id].unlocked = true;
+      }
+      saveProgress();
+      checkWinAchievements(stars);
+    }
+  }
+
+  // 失败过渡动画
+  if (game.state === 'lose_trans') {
+    game.transTimer -= dt;
+    if (game.transTimer <= 0) {
+      game.state = 'lose';
     }
   }
 
@@ -2800,19 +2824,64 @@ function render() {
   ctx.save();
   ctx.scale(s*dpr, s*dpr);
 
-  // 开场
+  // 开场动画（两阶段：1.5秒展示 + 1秒倒计时）
   if (game.state === 'intro') {
+    var total = 2.5, elapsed = total - game.introTimer;
+    var room = ROOMS[game.currentRoomIdx];
     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('房间里混入了 ' + game.catCount + ' 只猫咪!', VIEW_W/2, VIEW_H*0.4);
-    ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
-    ctx.fillText('它们伪装成了各种物品', VIEW_W/2, VIEW_H*0.48);
-    ctx.fillText('仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.53);
-    // 倒计时
-    var cd = Math.ceil(game.introTimer);
-    ctx.font = 'bold 48px sans-serif'; ctx.fillStyle = '#ffd700';
-    ctx.fillText(cd > 0 ? cd : 'GO!', VIEW_W/2, VIEW_H*0.65);
+
+    if (elapsed < 1.5) {
+      // 阶段1：房间名 + emoji 缩放入场
+      var p = Math.min(1, elapsed / 0.5);
+      var scale = p < 1 ? easeOutBack(p) : 1;
+      var fadeIn = Math.min(1, elapsed / 0.4);
+
+      ctx.save();
+      ctx.globalAlpha = fadeIn;
+      ctx.translate(VIEW_W/2, VIEW_H * 0.35);
+      ctx.scale(scale, scale);
+      ctx.font = '64px sans-serif';
+      ctx.fillText(room.emoji, 0, 0);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.3) / 0.4));
+      ctx.font = 'bold 30px sans-serif'; ctx.fillStyle = '#ffd700';
+      ctx.fillText(room.name, VIEW_W/2, VIEW_H * 0.50);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.6) / 0.4));
+      ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+      ctx.fillText('找出隐藏的 ' + room.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.58);
+      ctx.font = '13px sans-serif'; ctx.fillStyle = '#777';
+      ctx.fillText('❤️x' + room.lives + '  仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.63);
+      ctx.restore();
+    } else {
+      // 阶段2：倒计时 3..2..1..GO!
+      var cdElapsed = elapsed - 1.5;
+      var cd = Math.ceil(game.introTimer);
+      var cdText = cd > 0 ? cd.toString() : 'GO!';
+      // 每个数字弹入
+      var cdFrac = cdElapsed % 1.0;
+      var cdScale = cdFrac < 0.15 ? easeOutBack(cdFrac / 0.15) : 1;
+      var cdAlpha = cdFrac < 0.1 ? cdFrac / 0.1 : 1;
+
+      ctx.save();
+      ctx.globalAlpha = cdAlpha;
+      ctx.translate(VIEW_W/2, VIEW_H * 0.45);
+      ctx.scale(cdScale, cdScale);
+      ctx.font = 'bold 64px sans-serif';
+      ctx.fillStyle = cd > 0 ? '#ffd700' : '#66ff66';
+      ctx.fillText(cdText, 0, 0);
+      ctx.restore();
+
+      // 小标题
+      ctx.font = '14px sans-serif'; ctx.fillStyle = '#888';
+      ctx.fillText(room.emoji + ' ' + room.name, VIEW_W/2, VIEW_H * 0.60);
+    }
+
     ctx.restore();
     return;
   }
@@ -2926,6 +2995,14 @@ function render() {
 
   // 成就弹窗
   drawAchievePopup(ctx);
+
+  // 过渡动画
+  if (game.state === 'win_trans') {
+    drawWinTransition(ctx);
+  }
+  if (game.state === 'lose_trans') {
+    drawLoseTransition(ctx);
+  }
 
   // 结算画面
   if (game.state === 'win' || game.state === 'lose') {
@@ -3145,6 +3222,70 @@ function calcStars() {
   if (game.mistakes === 0) return 3;
   if (game.mistakes === 1) return 2;
   return 1;
+}
+
+function drawWinTransition(ctx) {
+  var total = 1.5, elapsed = total - game.transTimer;
+  var p = Math.min(1, elapsed / total);
+
+  // 渐暗背景
+  ctx.fillStyle = 'rgba(0,0,0,' + (p * 0.5) + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 星星依次飞入
+  var stars = calcStars();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (var i = 0; i < 3; i++) {
+    var starDelay = 0.2 + i * 0.3;
+    var sp = Math.max(0, Math.min(1, (elapsed - starDelay) / 0.4));
+    if (sp <= 0) continue;
+    var scale = easeOutBack(sp);
+    var sx = VIEW_W/2 - 50 + i * 50;
+    var sy = VIEW_H * 0.42;
+    ctx.save();
+    ctx.globalAlpha = sp;
+    ctx.translate(sx, sy);
+    ctx.scale(scale, scale);
+    ctx.font = '44px sans-serif';
+    ctx.fillText(i < stars ? '⭐' : '☆', 0, 0);
+    ctx.restore();
+  }
+
+  // "通关!" 文字
+  if (elapsed > 0.8) {
+    var tp = Math.min(1, (elapsed - 0.8) / 0.3);
+    ctx.save();
+    ctx.globalAlpha = tp;
+    ctx.font = 'bold 32px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.fillText('通关!', VIEW_W/2, VIEW_H * 0.55);
+    ctx.restore();
+  }
+}
+
+function drawLoseTransition(ctx) {
+  var total = 1.0, elapsed = total - game.transTimer;
+  var p = Math.min(1, elapsed / total);
+
+  // 红色闪光 → 渐暗
+  var flashAlpha = p < 0.2 ? p / 0.2 * 0.3 : 0.3 * (1 - (p - 0.2) / 0.8);
+  ctx.fillStyle = 'rgba(255,0,0,' + flashAlpha + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 渐暗叠加
+  ctx.fillStyle = 'rgba(0,0,0,' + (p * 0.6) + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // "游戏结束" 下落
+  if (elapsed > 0.3) {
+    var tp = Math.min(1, (elapsed - 0.3) / 0.4);
+    var dropY = (1 - tp) * -30;
+    ctx.save();
+    ctx.globalAlpha = tp;
+    ctx.font = 'bold 30px sans-serif'; ctx.fillStyle = '#ff5555';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('游戏结束', VIEW_W/2, VIEW_H * 0.45 + dropY);
+    ctx.restore();
+  }
 }
 
 function drawEndScreen(ctx) {

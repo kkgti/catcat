@@ -106,6 +106,8 @@ function GameEngine() {
   this.comboTimer = 0;
   this.comboWindow = 8;
   this.comboPopup = null;
+  // 过渡动画
+  this.transTimer = 0;
   // 动画帧 ID
   this._rafId = null;
   // 回调
@@ -370,21 +372,9 @@ GameEngine.prototype._update = function() {
       if (this.currentFoundCat) this.currentFoundCat.foundAnim = 1;
       this.currentFoundCat = null;
       if (this.foundCount >= this.cats.length) {
-        this.state = 'win'; SFX.win();
-        var stars = this._calcStars();
-        var pid = scene.ROOMS[this.currentRoomIdx].id;
-        if (!this.levelProgress[pid]) this.levelProgress[pid] = { unlocked: true, stars: 0 };
-        if (stars > this.levelProgress[pid].stars) {
-          this.levelProgress[pid].stars = stars;
-        }
-        if (this.currentRoomIdx < scene.ROOMS.length - 1) {
-          var nextId = scene.ROOMS[this.currentRoomIdx + 1].id;
-          if (!this.levelProgress[nextId]) this.levelProgress[nextId] = { unlocked: false, stars: 0 };
-          this.levelProgress[nextId].unlocked = true;
-        }
-        this._saveProgress();
-        // 成就检查
-        this._checkWinAchievements(stars);
+        this.state = 'win_trans';
+        this.transTimer = 1.5;
+        SFX.win();
       } else {
         this.state = 'playing';
       }
@@ -402,9 +392,40 @@ GameEngine.prototype._update = function() {
     this.wrongAnimTimer -= dt;
     if (this.wrongAnimTimer <= 0) {
       this.wrongItem = null;
-      var nextState = this.lives <= 0 ? 'lose' : 'playing';
-      this.state = nextState;
-      if (nextState === 'lose') SFX.lose();
+      if (this.lives <= 0) {
+        this.state = 'lose_trans';
+        this.transTimer = 1.0;
+        SFX.lose();
+      } else {
+        this.state = 'playing';
+      }
+    }
+  }
+
+  // 胜利过渡动画
+  if (this.state === 'win_trans') {
+    this.transTimer -= dt;
+    if (this.transTimer <= 0) {
+      this.state = 'win';
+      var stars = this._calcStars();
+      var pid = scene.ROOMS[this.currentRoomIdx].id;
+      if (!this.levelProgress[pid]) this.levelProgress[pid] = { unlocked: true, stars: 0 };
+      if (stars > this.levelProgress[pid].stars) this.levelProgress[pid].stars = stars;
+      if (this.currentRoomIdx < scene.ROOMS.length - 1) {
+        var nextId = scene.ROOMS[this.currentRoomIdx + 1].id;
+        if (!this.levelProgress[nextId]) this.levelProgress[nextId] = { unlocked: false, stars: 0 };
+        this.levelProgress[nextId].unlocked = true;
+      }
+      this._saveProgress();
+      this._checkWinAchievements(stars);
+    }
+  }
+
+  // 失败过渡动画
+  if (this.state === 'lose_trans') {
+    this.transTimer -= dt;
+    if (this.transTimer <= 0) {
+      this.state = 'lose';
     }
   }
 
@@ -711,16 +732,45 @@ GameEngine.prototype._render = function() {
 
   // 开场
   if (this.state === 'intro') {
+    var total = 2.5, elapsed = total - this.introTimer;
+    var room = scene.ROOMS[this.currentRoomIdx];
     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = '#ffd700';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('房间里混入了 ' + this.catCount + ' 只猫咪!', VIEW_W/2, VIEW_H*0.4);
-    ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
-    ctx.fillText('它们伪装成了各种物品', VIEW_W/2, VIEW_H*0.48);
-    ctx.fillText('仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.53);
-    var cd = Math.ceil(this.introTimer);
-    ctx.font = 'bold 48px sans-serif'; ctx.fillStyle = '#ffd700';
-    ctx.fillText(cd > 0 ? cd : 'GO!', VIEW_W/2, VIEW_H*0.65);
+
+    if (elapsed < 1.5) {
+      var p = Math.min(1, elapsed / 0.5);
+      var sc = p < 1 ? easeOutBack(p) : 1;
+      var fadeIn = Math.min(1, elapsed / 0.4);
+      ctx.save(); ctx.globalAlpha = fadeIn;
+      ctx.translate(VIEW_W/2, VIEW_H * 0.35); ctx.scale(sc, sc);
+      ctx.font = '64px sans-serif'; ctx.fillText(room.emoji, 0, 0);
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.3) / 0.4));
+      ctx.font = 'bold 30px sans-serif'; ctx.fillStyle = '#ffd700';
+      ctx.fillText(room.name, VIEW_W/2, VIEW_H * 0.50);
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.6) / 0.4));
+      ctx.font = '16px sans-serif'; ctx.fillStyle = '#aaa';
+      ctx.fillText('找出隐藏的 ' + room.catCount + ' 只猫咪', VIEW_W/2, VIEW_H*0.58);
+      ctx.font = '13px sans-serif'; ctx.fillStyle = '#777';
+      ctx.fillText('❤️x' + room.lives + '  仔细观察可疑的动静...', VIEW_W/2, VIEW_H*0.63);
+      ctx.restore();
+    } else {
+      var cdElapsed = elapsed - 1.5;
+      var cd = Math.ceil(this.introTimer);
+      var cdText = cd > 0 ? cd.toString() : 'GO!';
+      var cdFrac = cdElapsed % 1.0;
+      var cdScale = cdFrac < 0.15 ? easeOutBack(cdFrac / 0.15) : 1;
+      var cdAlpha = cdFrac < 0.1 ? cdFrac / 0.1 : 1;
+      ctx.save(); ctx.globalAlpha = cdAlpha;
+      ctx.translate(VIEW_W/2, VIEW_H * 0.45); ctx.scale(cdScale, cdScale);
+      ctx.font = 'bold 64px sans-serif';
+      ctx.fillStyle = cd > 0 ? '#ffd700' : '#66ff66';
+      ctx.fillText(cdText, 0, 0);
+      ctx.restore();
+      ctx.font = '14px sans-serif'; ctx.fillStyle = '#888';
+      ctx.fillText(room.emoji + ' ' + room.name, VIEW_W/2, VIEW_H * 0.60);
+    }
     ctx.restore();
     return;
   }
@@ -832,6 +882,10 @@ GameEngine.prototype._render = function() {
     draw.roundRect(ctx, VIEW_W/2-tw/2-15, VIEW_H*0.88-16, tw+30, 32, 12, 'rgba(0,0,0,0.7)');
     ctx.fillStyle = '#fff'; ctx.fillText(this.toast, VIEW_W/2, VIEW_H*0.88);
   }
+
+  // 过渡动画
+  if (this.state === 'win_trans') this._drawWinTransition(ctx);
+  if (this.state === 'lose_trans') this._drawLoseTransition(ctx);
 
   // 结算
   if (this.state === 'win' || this.state === 'lose') {
@@ -1174,6 +1228,54 @@ GameEngine.prototype._drawToolBtn = function(ctx, x, y, size, icon, label, ready
     ctx.fillText(cd + 's', x+size/2, y+size/2 - 2);
   }
   ctx.restore();
+};
+
+GameEngine.prototype._drawWinTransition = function(ctx) {
+  var total = 1.5, elapsed = total - this.transTimer;
+  var p = Math.min(1, elapsed / total);
+  ctx.fillStyle = 'rgba(0,0,0,' + (p * 0.5) + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  var stars = this._calcStars();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (var i = 0; i < 3; i++) {
+    var starDelay = 0.2 + i * 0.3;
+    var sp = Math.max(0, Math.min(1, (elapsed - starDelay) / 0.4));
+    if (sp <= 0) continue;
+    var scale = easeOutBack(sp);
+    var sx = VIEW_W/2 - 50 + i * 50;
+    var sy = VIEW_H * 0.42;
+    ctx.save(); ctx.globalAlpha = sp;
+    ctx.translate(sx, sy); ctx.scale(scale, scale);
+    ctx.font = '44px sans-serif';
+    ctx.fillText(i < stars ? '⭐' : '☆', 0, 0);
+    ctx.restore();
+  }
+  if (elapsed > 0.8) {
+    var tp = Math.min(1, (elapsed - 0.8) / 0.3);
+    ctx.save(); ctx.globalAlpha = tp;
+    ctx.font = 'bold 32px sans-serif'; ctx.fillStyle = '#ffd700';
+    ctx.fillText('通关!', VIEW_W/2, VIEW_H * 0.55);
+    ctx.restore();
+  }
+};
+
+GameEngine.prototype._drawLoseTransition = function(ctx) {
+  var total = 1.0, elapsed = total - this.transTimer;
+  var p = Math.min(1, elapsed / total);
+  var flashAlpha = p < 0.2 ? p / 0.2 * 0.3 : 0.3 * (1 - (p - 0.2) / 0.8);
+  ctx.fillStyle = 'rgba(255,0,0,' + flashAlpha + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.fillStyle = 'rgba(0,0,0,' + (p * 0.6) + ')';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  if (elapsed > 0.3) {
+    var tp = Math.min(1, (elapsed - 0.3) / 0.4);
+    var dropY = (1 - tp) * -30;
+    ctx.save(); ctx.globalAlpha = tp;
+    ctx.font = 'bold 30px sans-serif'; ctx.fillStyle = '#ff5555';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('游戏结束', VIEW_W/2, VIEW_H * 0.45 + dropY);
+    ctx.restore();
+  }
 };
 
 GameEngine.prototype._drawEndScreen = function(ctx) {
