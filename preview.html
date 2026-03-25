@@ -1163,9 +1163,13 @@ var levelProgress;
 try {
   levelProgress = JSON.parse(localStorage.getItem('catHideProgress'));
 } catch(e) {}
-if (!levelProgress) {
-  levelProgress = { livingroom:{unlocked:true,stars:0}, kitchen:{unlocked:false,stars:0}, bedroom:{unlocked:false,stars:0}, bathroom:{unlocked:false,stars:0}, study:{unlocked:false,stars:0} };
-}
+if (!levelProgress) levelProgress = {};
+// 确保每个房间都有进度记录
+ROOMS.forEach(function(r, i) {
+  if (!levelProgress[r.id]) {
+    levelProgress[r.id] = { unlocked: i === 0, stars: 0 };
+  }
+});
 function saveProgress() {
   try { localStorage.setItem('catHideProgress', JSON.stringify(levelProgress)); } catch(e) {}
 }
@@ -3820,7 +3824,7 @@ function renderLevelSelect() {
   if (!container) return;
   container.innerHTML = '';
   ROOMS.forEach(function(room, idx) {
-    var prog = levelProgress[room.id];
+    var prog = levelProgress[room.id] || { unlocked: idx === 0, stars: 0 };
     var card = document.createElement('div');
     card.className = 'level-card ' + (prog.unlocked ? 'unlocked' : 'locked');
     if (prog.unlocked) {
