@@ -5,6 +5,7 @@
 var draw = require('./draw-utils');
 var scene = require('./scene');
 var catSystem = require('./cat-system');
+var SFX = require('./sfx');
 
 var VIEW_W = scene.VIEW_W;
 var VIEW_H = scene.VIEW_H;
@@ -73,6 +74,7 @@ function GameEngine() {
   this.retryBtn = null;
   this.nextLevelBtn = null;
   this.selectBtn = null;
+  this.muteBtn = null;
   // 关卡进度
   this.levelProgress = null;
   // 计时器
@@ -167,6 +169,7 @@ GameEngine.prototype._unlockAchievement = function(id) {
   for (var i = 0; i < ACHIEVEMENTS.length; i++) {
     if (ACHIEVEMENTS[i].id === id) {
       this.achievePopup = { name: ACHIEVEMENTS[i].name, icon: ACHIEVEMENTS[i].icon, timer: 3.0 };
+      SFX.achieve();
       break;
     }
   }
@@ -319,7 +322,10 @@ GameEngine.prototype._update = function() {
 
   // 开场提示
   if (this.state === 'intro') {
+    var prevSec = Math.ceil(this.introTimer);
     this.introTimer -= dt;
+    var curSec = Math.ceil(this.introTimer);
+    if (curSec !== prevSec && curSec > 0) SFX.tick();
     if (this.introTimer <= 0) {
       this.state = 'playing';
       var rm = scene.ROOMS[this.currentRoomIdx];
@@ -349,7 +355,7 @@ GameEngine.prototype._update = function() {
       if (this.currentFoundCat) this.currentFoundCat.foundAnim = 1;
       this.currentFoundCat = null;
       if (this.foundCount >= this.cats.length) {
-        this.state = 'win';
+        this.state = 'win'; SFX.win();
         var stars = this._calcStars();
         var pid = scene.ROOMS[this.currentRoomIdx].id;
         if (!this.levelProgress[pid]) this.levelProgress[pid] = { unlocked: true, stars: 0 };
@@ -381,7 +387,9 @@ GameEngine.prototype._update = function() {
     this.wrongAnimTimer -= dt;
     if (this.wrongAnimTimer <= 0) {
       this.wrongItem = null;
-      this.state = this.lives <= 0 ? 'lose' : 'playing';
+      var nextState = this.lives <= 0 ? 'lose' : 'playing';
+      this.state = nextState;
+      if (nextState === 'lose') SFX.lose();
     }
   }
 
@@ -859,6 +867,11 @@ GameEngine.prototype._drawHUD = function(ctx) {
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
   ctx.fillText('🐱 ' + this.foundCount + ' / ' + this.catCount, VIEW_W-22, 33);
+  // 音量按钮
+  var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
+  ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(muteIcon, VIEW_W - 22, 68);
+  this.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
 };
 
 GameEngine.prototype._drawToolbar = function(ctx) {
@@ -1313,24 +1326,32 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (this.retryBtn) {
       var b = this.retryBtn;
       if (vx >= b.x && vx <= b.x+b.w && vy >= b.y && vy <= b.y+b.h) {
-        this.startGame(); return;
+        SFX.tap(); this.startGame(); return;
       }
     }
     if (this.nextLevelBtn) {
       var nb = this.nextLevelBtn;
       if (vx >= nb.x && vx <= nb.x+nb.w && vy >= nb.y && vy <= nb.y+nb.h) {
-        this.startGame(this.currentRoomIdx + 1); return;
+        SFX.tap(); this.startGame(this.currentRoomIdx + 1); return;
       }
     }
     if (this.selectBtn) {
       var sb = this.selectBtn;
       if (vx >= sb.x && vx <= sb.x+sb.w && vy >= sb.y && vy <= sb.y+sb.h) {
-        this.stop();
+        SFX.tap(); this.stop();
         if (this.onShowLevelSelect) this.onShowLevelSelect();
         return;
       }
     }
     return;
+  }
+
+  // 音量按钮（任何游戏状态都可用）
+  if (this.muteBtn) {
+    var mb = this.muteBtn;
+    if (vx >= mb.x && vx <= mb.x+mb.w && vy >= mb.y && vy <= mb.y+mb.h) {
+      SFX.toggleMute(); return;
+    }
   }
 
   if (this.state !== 'playing') return;
@@ -1381,6 +1402,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     this._lastFoundTime = 0;
     this.hintTimer = 0; this.hintCat = null;
     // 生成庆祝粒子
+    SFX.catFound();
     this._spawnParticles(hit.catRef.x + hit.catRef.w/2, hit.catRef.y + hit.catRef.h/2);
     // 引导模式：找到第一只猫后进入 found 步骤
     if (this.tutorial && this.tutorial.step <= 1) {
@@ -1400,6 +1422,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     }
     this.lives--;
     this.mistakes++;
+    SFX.wrong();
     this.wrongItem = hit;
     this.wrongAnimTimer = 0.6;
     this.shakeTimer = 0.3;
@@ -1419,6 +1442,7 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
       this.activeTool = null;
     } else {
       this.activeTool = 'laser';
+      SFX.toolUse();
       this.toast = '点击房间中任意位置使用激光笔'; this.toastTimer = 1.5;
     }
   } else if (type === 'catnip') {
@@ -1428,6 +1452,7 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
     }
     this.catnipActive = true;
     this._usedCatnip = true;
+    SFX.toolUse();
     this.catnipX = VIEW_W / 2;
     this.catnipY = (scene.BACK_B + scene.FLOOR_B) / 2;
     this.catnipTimer = 3.0;
