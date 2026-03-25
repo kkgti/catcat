@@ -79,6 +79,7 @@ function GameEngine() {
   this.retryBtn = null;
   this.nextLevelBtn = null;
   this.selectBtn = null;
+  this.shareBtn = null;
   this.muteBtn = null;
   // 关卡进度
   this.levelProgress = null;
@@ -227,6 +228,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.retryBtn = null;
   this.nextLevelBtn = null;
   this.selectBtn = null;
+  this.shareBtn = null;
   this.laserCooldown = 0;
   this.laserActive = false;
   this.laserTimer = 0;
@@ -249,6 +251,7 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this.paused = false;
 
   var roomId = room.id;
+  SFX.startAmbient(roomId);
 
   // 放置房间物品
   var roomItems = catSystem.placeItems(room.items, null, roomId);
@@ -400,6 +403,7 @@ GameEngine.prototype._update = function() {
       if (this.foundCount >= this.cats.length) {
         this.state = 'win_trans';
         this.transTimer = 1.5;
+        SFX.stopAmbient();
         SFX.win();
       } else {
         this.state = 'playing';
@@ -421,6 +425,7 @@ GameEngine.prototype._update = function() {
       if (this.lives <= 0) {
         this.state = 'lose_trans';
         this.transTimer = 1.0;
+        SFX.stopAmbient();
         SFX.lose();
       } else {
         this.state = 'playing';
@@ -689,6 +694,10 @@ GameEngine.prototype._drawEnvEvent = function(ctx) {
   if (!this.envEvent) return;
   var e = this.envEvent;
   var p = 1 - e.timer / e.duration;
+  // envDistraction 缩放干扰可见度
+  var dist = scene.ROOMS[this.currentRoom] && scene.ROOMS[this.currentRoom].envDistraction;
+  var _distSaved = false;
+  if (dist !== undefined && dist < 1) { ctx.save(); ctx.globalAlpha *= dist; _distSaved = true; }
 
   if (e.type === 'flicker') {
     var flk = Math.sin(p * Math.PI * 8);
@@ -742,6 +751,8 @@ GameEngine.prototype._drawEnvEvent = function(ctx) {
     }
     ctx.restore();
   }
+  // 关闭 envDistraction 的 save
+  if (_distSaved) { ctx.restore(); }
 };
 
 GameEngine.prototype._calcStars = function() {
@@ -932,6 +943,11 @@ GameEngine.prototype._render = function() {
   // 结算
   if (this.state === 'win' || this.state === 'lose') {
     this._drawEndScreen(ctx);
+  }
+
+  // 分享卡片（覆盖在结算上面）
+  if (this.subScreen === 'share_card') {
+    this._drawShareCard(ctx);
   }
 
   // 新手引导覆盖层
@@ -1499,6 +1515,7 @@ GameEngine.prototype._handleLevelSelectTap = function(vx, vy) {
 };
 
 GameEngine.prototype._showLevelSelect = function() {
+  SFX.stopAmbient();
   if (this.onShowLevelSelect) {
     this.stop();
     this.onShowLevelSelect();
@@ -1791,11 +1808,148 @@ GameEngine.prototype._drawEndScreen = function(ctx) {
     this.selectBtn = { x: cx + btnGap/2, y: btnStartY, w: btnW, h: btnH };
   }
 
-  // ── 截图提示（仅胜利）──
+  // ── 分享按钮（仅胜利时显示）──
   if (isWin) {
-    var saveY = this.currentRoomIdx < scene.ROOMS.length - 1 ? btnStartY + btnH + 50 : btnStartY + btnH + 12;
-    ctx.font = '12px sans-serif'; ctx.fillStyle = 'rgba(255,215,0,0.5)';
-    ctx.fillText('📷 长按截图分享成绩', cx, saveY);
+    var shareY = this.currentRoomIdx < scene.ROOMS.length - 1 ? btnStartY + btnH + 50 : btnStartY + btnH + 12;
+    var shareBtnW = 130, shareBtnH = 36;
+    var shareBtnX = cx - shareBtnW / 2;
+    var shareGrad = ctx.createLinearGradient(shareBtnX, shareY, shareBtnX, shareY + shareBtnH);
+    shareGrad.addColorStop(0, '#43b581');
+    shareGrad.addColorStop(1, '#2d8b5e');
+    draw.roundRect(ctx, shareBtnX, shareY, shareBtnW, shareBtnH, 18, shareGrad);
+    ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('📤 分享成绩', cx, shareY + shareBtnH / 2);
+    this.shareBtn = { x: shareBtnX, y: shareY, w: shareBtnW, h: shareBtnH };
+  } else {
+    this.shareBtn = null;
+  }
+};
+
+// ==================== 分享成绩卡片 ====================
+
+GameEngine.prototype._drawShareCard = function(ctx) {
+  var room = scene.ROOMS[this.currentRoomIdx];
+  var stars = this._calcStars();
+  ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  var cardW = 340, cardH = 440;
+  var cardX = (VIEW_W - cardW) / 2, cardY = (VIEW_H - cardH) / 2 - 40;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,180,50,0.3)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 4;
+  var bgGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+  bgGrad.addColorStop(0, '#2a1f3d'); bgGrad.addColorStop(0.4, '#1e1a30'); bgGrad.addColorStop(1, '#15132a');
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, bgGrad);
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 2;
+  draw.roundRect(ctx, cardX, cardY, cardW, cardH, 20, null, ctx.strokeStyle);
+  // 顶部金线
+  var topGrad = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY);
+  topGrad.addColorStop(0, '#ffd700'); topGrad.addColorStop(0.5, '#ffaa33'); topGrad.addColorStop(1, '#ffd700');
+  draw.roundRect(ctx, cardX + 20, cardY + 1, cardW - 40, 6, 3, topGrad);
+  var cx = VIEW_W / 2;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // 标题
+  ctx.font = 'bold 24px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('🐱 变身躲猫猫', cx, cardY + 40);
+  ctx.strokeStyle = 'rgba(255,215,0,0.15)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cardX + 30, cardY + 60); ctx.lineTo(cardX + cardW - 30, cardY + 60); ctx.stroke();
+  // 关卡
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#ccc';
+  ctx.fillText(room.emoji + ' ' + room.name, cx, cardY + 82);
+  // 星级
+  var starY = cardY + 118;
+  ctx.font = '40px sans-serif';
+  var t = Date.now() / 1000;
+  for (var i = 0; i < 3; i++) {
+    var sx = cx - 48 + i * 48;
+    var bounce = i < stars ? Math.sin(t * 2.5 + i * 0.7) * 3 : 0;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(i < stars ? '⭐' : '☆', sx, starY + bounce);
+  }
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText(stars === 3 ? '🏆 完美通关!' : stars === 2 ? '✨ 出色表现!' : '💪 成功通关!', cx, starY + 32);
+  // 数据面板
+  var panelY = starY + 58;
+  draw.roundRect(ctx, cardX + 20, panelY, cardW - 40, 110, 14, 'rgba(255,255,255,0.05)');
+  var lx = cardX + cardW * 0.30, rx = cardX + cardW * 0.70;
+  var row1Y = panelY + 28;
+  ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText(this.foundCount + '/' + this.catCount, lx, row1Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('🐱 猫咪', lx, row1Y + 20);
+  var mins = Math.floor(this.playTime / 60); var secs = Math.floor(this.playTime % 60);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = '#88ccff'; ctx.fillText(timeStr, rx, row1Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('⏱ 用时', rx, row1Y + 20);
+  var row2Y = row1Y + 52;
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ff8888'; ctx.fillText(this.mistakes.toString(), lx, row2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('❌ 失误', lx, row2Y + 18);
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = this.maxCombo >= 3 ? '#ffaa00' : '#88ddaa';
+  ctx.fillText(this.maxCombo > 0 ? this.maxCombo + 'x' : '-', rx, row2Y);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777'; ctx.fillText('🔥 连击', rx, row2Y + 18);
+  // 邀请文字
+  ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffcc66';
+  ctx.fillText('🏃 来挑战我吧!', cx, panelY + 138);
+  ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillText('变身躲猫猫 © 2026', cx, cardY + cardH - 14);
+  ctx.restore();
+  // 底部按钮
+  var btnY = cardY + cardH + 16;
+  var btnW = 140, btnH = 40, gap = 14;
+  var saveBtnX = cx - btnW - gap / 2;
+  var saveGrad = ctx.createLinearGradient(saveBtnX, btnY, saveBtnX, btnY + btnH);
+  saveGrad.addColorStop(0, '#43b581'); saveGrad.addColorStop(1, '#2d8b5e');
+  draw.roundRect(ctx, saveBtnX, btnY, btnW, btnH, 20, saveGrad);
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('💾 保存图片', saveBtnX + btnW / 2, btnY + btnH / 2);
+  this._shareCardSaveBtn = { x: saveBtnX, y: btnY, w: btnW, h: btnH };
+  var backBtnX = cx + gap / 2;
+  draw.roundRect(ctx, backBtnX, btnY, btnW, btnH, 20, 'rgba(255,255,255,0.12)');
+  ctx.fillStyle = '#bbb';
+  ctx.fillText('← 返回', backBtnX + btnW / 2, btnY + btnH / 2);
+  this._shareCardBackBtn = { x: backBtnX, y: btnY, w: btnW, h: btnH };
+};
+
+GameEngine.prototype._saveShareCardAsImage = function() {
+  var self = this;
+  var canvas = this.ctx && this.ctx.canvas ? this.ctx.canvas : null;
+  if (!canvas) return;
+
+  // ── 小程序环境：使用 tt.canvasToTempFilePath + tt.saveImageToPhotosAlbum ──
+  // if (typeof tt !== 'undefined' && tt.canvasToTempFilePath) {
+  //   tt.canvasToTempFilePath({
+  //     canvas: canvas,
+  //     success: function(res) {
+  //       tt.saveImageToPhotosAlbum({
+  //         filePath: res.tempFilePath,
+  //         success: function() {
+  //           self.toast = '图片已保存到相册!'; self.toastTimer = 2.0;
+  //         },
+  //         fail: function() {
+  //           self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
+  //         }
+  //       });
+  //     },
+  //     fail: function() {
+  //       self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
+  //     }
+  //   });
+  //   return;
+  // }
+
+  // ── 浏览器环境：toDataURL + download ──
+  try {
+    var room = scene.ROOMS[this.currentRoomIdx];
+    var stars = this._calcStars();
+    var dataURL = canvas.toDataURL('image/png');
+    var link = document.createElement('a');
+    link.download = '躲猫猫成绩_' + room.name + '_' + stars + '星.png';
+    link.href = dataURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    self.toast = '图片已保存!'; self.toastTimer = 2.0;
+  } catch (e) {
+    self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
   }
 };
 
@@ -1858,12 +2012,9 @@ GameEngine.prototype._drawAchievePopup = function(ctx) {
 
 // 引导步骤配置
 var TUT_STEPS = [
-  { id: 'observe',  text: '仔细看！有些物品在微微晃动...', sub: '那可能是猫咪伪装的！', duration: 0, waitTap: false },
-  { id: 'tap',      text: '点击那个晃动的物品！', sub: '👆 试试看', duration: 0, waitTap: true },
-  { id: 'found',    text: '太棒了！你找到了一只猫！🎉', sub: '', duration: 2.0, waitTap: false },
-  { id: 'clues',    text: '猫咪会露出4种破绽：', sub: '💫晃动  🐾尾巴  💬说话  👀偷看', duration: 0, waitTap: false },
-  { id: 'tools',    text: '左下角有道具帮助你：', sub: '🔦激光笔引猫注意  🌿猫薄荷让猫兴奋', duration: 0, waitTap: false },
-  { id: 'go',       text: '继续找出剩下的猫咪吧！', sub: '加油！', duration: 1.5, waitTap: false },
+  { id: 'observe', text: '观察房间，有东西在微微晃动...', sub: '', duration: 0, waitTap: false },
+  { id: 'tap',     text: '点击它！', sub: '', duration: 0, waitTap: true },
+  { id: 'found',   text: '太棒了！找到了！', sub: '继续找剩下的猫咪吧', duration: 2.0, waitTap: false },
 ];
 
 GameEngine.prototype._hasTutorialDone = function() {
@@ -1882,7 +2033,6 @@ GameEngine.prototype._updateTutorial = function(dt) {
 
   tut.timer += dt;
 
-  // Step 0 (observe): 强制第一只猫持续晃动，等3秒后自动进入下一步
   if (step.id === 'observe') {
     var cat = this.cats[0];
     if (cat && !cat.found) {
@@ -1892,7 +2042,6 @@ GameEngine.prototype._updateTutorial = function(dt) {
     if (tut.timer >= 3.0) { tut.step++; tut.timer = 0; }
   }
 
-  // Step 1 (tap): 保持猫晃动，设置点击目标，等玩家点击
   if (step.id === 'tap') {
     var cat = this.cats[0];
     if (cat && !cat.found) {
@@ -1900,24 +2049,13 @@ GameEngine.prototype._updateTutorial = function(dt) {
       cat.wobbleDuration = 999; cat.wobbleStrength = 5;
       tut.tapTarget = cat;
     } else {
-      // 玩家已经找到了（通过正常点击逻辑），跳到 found 步骤
       tut.step = 2; tut.timer = 0;
     }
   }
 
-  // Step 2 (found): 自动等待后进入下一步
   if (step.id === 'found' && tut.timer >= step.duration) {
-    tut.step++; tut.timer = 0;
-  }
-
-  // Step 3 (clues): 点击继续
-  // Step 4 (tools): 点击继续 — 高亮工具栏区域
-
-  // Step 5 (go): 自动等待后结束引导
-  if (step.id === 'go' && tut.timer >= step.duration) {
     this._saveTutorialDone();
     this.tutorial = null;
-    // 恢复第一只猫的正常行为
     var cat = this.cats[0];
     if (cat && !cat.found) {
       cat.wobbleActive = false;
@@ -1932,98 +2070,96 @@ GameEngine.prototype._drawTutorial = function(ctx) {
   var tut = this.tutorial;
   var step = TUT_STEPS[tut.step];
   if (!step) return;
+  var now = Date.now();
 
-  // 半透明遮罩（非点击区域）
   ctx.save();
 
-  // 如果有点击目标（tap步骤），在目标周围开一个"洞"
-  if (step.id === 'tap' && tut.tapTarget) {
-    var cat = tut.tapTarget;
-    var cx = cat.x + cat.w / 2, cy = cat.y + cat.h / 2;
-    var r = Math.max(cat.w, cat.h) * 0.65;
-
-    // 画遮罩但挖洞
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.beginPath();
-    ctx.rect(0, 0, VIEW_W, VIEW_H);
-    ctx.arc(cx, cy, r, 0, Math.PI * 2, true); // 反向圆弧 = 挖洞
-    ctx.fill();
-
-    // 脉动光圈
-    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
-
-    // 手指图标
-    var fingerY = cy + r + 18 + Math.sin(Date.now() / 400) * 6;
-    ctx.font = '28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillStyle = '#fff';
-    ctx.fillText('👆', cx, fingerY);
-  } else if (step.id === 'tools') {
-    // 高亮左下角工具栏区域
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.beginPath();
-    ctx.rect(0, 0, VIEW_W, VIEW_H);
-    ctx.rect(5, VIEW_H - 80, 130, 70); // 工具栏区域反向矩形
-    ctx.fill('evenodd');
-    // 工具栏光圈
-    var pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-    ctx.strokeStyle = 'rgba(255,215,0,' + pulse + ')';
-    ctx.lineWidth = 2;
-    draw.roundRect(ctx, 5, VIEW_H - 80, 130, 70, 14, null, ctx.strokeStyle);
-  } else if (step.id === 'observe') {
-    // observe 步骤：轻遮罩 + 箭头指向第一只猫
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  // --- 背景遮罩 + 目标高亮 ---
+  if (step.id === 'observe') {
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     var cat = this.cats[0];
     if (cat && !cat.found) {
-      var cx = cat.x + cat.w / 2, cy = cat.y - 15;
-      var bobY = Math.sin(Date.now() / 300) * 6;
-      ctx.font = '24px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = '#ffd700';
-      ctx.fillText('👇', cx, cy + bobY);
+      // 浮动手指指向猫
+      var bobY = Math.sin(now / 350) * 8;
+      ctx.save();
+      ctx.font = '32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(255,215,0,0.8)'; ctx.shadowBlur = 12;
+      ctx.fillText('👆', cat.x + cat.w / 2, cat.y - 10 + bobY);
+      ctx.restore();
     }
+  } else if (step.id === 'tap' && tut.tapTarget) {
+    var cat = tut.tapTarget;
+    var tcx = cat.x + cat.w / 2, tcy = cat.y + cat.h / 2;
+    var r = Math.max(cat.w, cat.h) * 0.65;
+    // 暗遮罩挖出圆形
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.arc(tcx, tcy, r, 0, Math.PI * 2, true); ctx.fill();
+    // 脉动高亮圈
+    var pulse = Math.sin(now / 300) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(255,215,0,' + pulse.toFixed(2) + ')'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(tcx, tcy, r + 4, 0, Math.PI * 2); ctx.stroke();
+    // 扩散圈
+    var expand = (now % 1200) / 1200;
+    ctx.strokeStyle = 'rgba(255,215,0,' + ((1 - expand) * 0.5).toFixed(2) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(tcx, tcy, r + 4 + expand * 18, 0, Math.PI * 2); ctx.stroke();
+    // 手指
+    var bobY2 = Math.sin(now / 350) * 8;
+    ctx.save();
+    ctx.font = '32px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(255,215,0,0.8)'; ctx.shadowBlur = 12;
+    ctx.fillText('👆', tcx, tcy + r + 10 + bobY2);
+    ctx.restore();
+  } else if (step.id === 'found') {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   } else {
-    // 其他步骤：轻遮罩
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
-  // 文字气泡
-  var textY = VIEW_H * 0.18;
-  var boxW = 460, boxH = step.sub ? 90 : 60;
-  var boxX = VIEW_W / 2 - boxW / 2;
-  draw.roundRect(ctx, boxX, textY, boxW, boxH, 18, 'rgba(0,0,0,0.8)');
-  ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
-  draw.roundRect(ctx, boxX, textY, boxW, boxH, 18, null, 'rgba(255,215,0,0.5)');
-
-  ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // --- 分步气泡 ---
+  var bubbleW = 380, bubbleH = step.sub ? 85 : 55;
+  var bubbleX = VIEW_W / 2 - bubbleW / 2;
+  var bubbleY = VIEW_H * 0.15;
+  // 滑入动画
+  var slideT = Math.min(tut.timer / 0.3, 1);
+  bubbleY += (1 - slideT * slideT) * (-20);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4;
+  draw.roundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, 16, 'rgba(20,20,30,0.9)');
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(255,215,0,0.6)'; ctx.lineWidth = 1.5;
+  draw.roundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, 16, null, 'rgba(255,215,0,0.6)');
+  // 步骤指示点
+  var dotSpacing = 14, dotsW = (TUT_STEPS.length - 1) * dotSpacing;
+  var dotStartX = VIEW_W / 2 - dotsW / 2, dotY = bubbleY + bubbleH - 12;
+  for (var di = 0; di < TUT_STEPS.length; di++) {
+    ctx.beginPath(); ctx.arc(dotStartX + di * dotSpacing, dotY, di === tut.step ? 3.5 : 2, 0, Math.PI * 2);
+    ctx.fillStyle = di === tut.step ? '#ffd700' : 'rgba(255,255,255,0.3)'; ctx.fill();
+  }
+  // 主文字
+  ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffd700';
-  ctx.fillText(step.text, VIEW_W / 2, textY + (step.sub ? 28 : boxH / 2));
-  if (step.sub) {
-    ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd';
-    ctx.fillText(step.sub, VIEW_W / 2, textY + 58);
-  }
+  ctx.fillText(step.text, VIEW_W / 2, step.sub ? bubbleY + 28 : bubbleY + bubbleH / 2);
+  if (step.sub) { ctx.font = '14px sans-serif'; ctx.fillStyle = '#ddd'; ctx.fillText(step.sub, VIEW_W / 2, bubbleY + 55); }
+  ctx.restore();
 
-  // 点击继续提示（非自动步骤 & 非等待特定点击）
+  // "点击继续"提示
   if (!step.waitTap && step.duration === 0) {
-    var alpha = 0.4 + Math.sin(Date.now() / 500) * 0.3;
+    var alpha = 0.4 + Math.sin(now / 500) * 0.3;
     ctx.globalAlpha = alpha;
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
-    ctx.fillText('点击任意处继续', VIEW_W / 2, textY + boxH + 20);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa'; ctx.textAlign = 'center';
+    ctx.fillText('点击任意处继续', VIEW_W / 2, bubbleY + bubbleH + 20);
     ctx.globalAlpha = 1;
   }
 
   // 跳过按钮
-  var skipX = VIEW_W - 80, skipY = textY - 30, skipW = 60, skipH = 28;
+  var skipX = VIEW_W - 80, skipY = bubbleY - 30, skipW = 60, skipH = 28;
   ctx.globalAlpha = 0.6;
   draw.roundRect(ctx, skipX, skipY, skipW, skipH, 10, 'rgba(255,255,255,0.15)');
-  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center';
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('跳过', skipX + skipW / 2, skipY + skipH / 2);
   ctx.globalAlpha = 1;
   tut.skipBtn = { x: skipX, y: skipY, w: skipW, h: skipH };
-
   ctx.restore();
 };
 
@@ -2033,13 +2169,11 @@ GameEngine.prototype._handleTutorialTap = function(vx, vy) {
   var step = TUT_STEPS[tut.step];
   if (!step) return false;
 
-  // 跳过按钮
   if (tut.skipBtn) {
     var sb = tut.skipBtn;
     if (vx >= sb.x && vx <= sb.x + sb.w && vy >= sb.y && vy <= sb.y + sb.h) {
       this._saveTutorialDone();
       this.tutorial = null;
-      // 恢复猫行为
       var cat = this.cats[0];
       if (cat && !cat.found) {
         cat.wobbleActive = false;
@@ -2050,15 +2184,9 @@ GameEngine.prototype._handleTutorialTap = function(vx, vy) {
     }
   }
 
-  // 等待特定点击的步骤（tap）：让正常的点击逻辑处理
   if (step.waitTap) return false;
-
-  // 自动计时步骤：忽略点击
   if (step.duration > 0) return true;
-
-  // 点击继续步骤
-  tut.step++;
-  tut.timer = 0;
+  tut.step++; tut.timer = 0;
   return true;
 };
 
@@ -2157,6 +2285,23 @@ GameEngine.prototype.handleTouchEnd = function(x, y) {
 };
 
 GameEngine.prototype._handleTap = function(vx, vy) {
+  // 分享卡片画面
+  if (this.subScreen === 'share_card') {
+    if (this._shareCardSaveBtn) {
+      var svb = this._shareCardSaveBtn;
+      if (vx >= svb.x && vx <= svb.x+svb.w && vy >= svb.y && vy <= svb.y+svb.h) {
+        SFX.tap(); this._saveShareCardAsImage(); return;
+      }
+    }
+    if (this._shareCardBackBtn) {
+      var bkb = this._shareCardBackBtn;
+      if (vx >= bkb.x && vx <= bkb.x+bkb.w && vy >= bkb.y && vy <= bkb.y+bkb.h) {
+        SFX.tap(); this.subScreen = null; return;
+      }
+    }
+    return;
+  }
+
   // 关卡选择画面
   if (this.state === 'ready') {
     this._handleLevelSelectTap(vx, vy);
@@ -2187,6 +2332,13 @@ GameEngine.prototype._handleTap = function(vx, vy) {
         return;
       }
     }
+    // 分享按钮
+    if (this.shareBtn) {
+      var shb = this.shareBtn;
+      if (vx >= shb.x && vx <= shb.x+shb.w && vy >= shb.y && vy <= shb.y+shb.h) {
+        SFX.tap(); this.subScreen = 'share_card'; return;
+      }
+    }
     return;
   }
 
@@ -2195,7 +2347,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     if (this.pauseResumeBtn) {
       var pr = this.pauseResumeBtn;
       if (vx >= pr.x && vx <= pr.x+pr.w && vy >= pr.y && vy <= pr.y+pr.h) {
-        SFX.tap(); this.paused = false; return;
+        SFX.tap(); this.paused = false; SFX.startAmbient(scene.ROOMS[this.currentRoomIdx].id); return;
       }
     }
     if (this.pauseRetryBtn) {
@@ -2219,7 +2371,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
   if (this.pauseBtn && this.state === 'playing') {
     var pb = this.pauseBtn;
     if (vx >= pb.x && vx <= pb.x+pb.w && vy >= pb.y && vy <= pb.y+pb.h) {
-      SFX.tap(); this.paused = true; return;
+      SFX.tap(); this.paused = true; SFX.stopAmbient(); return;
     }
   }
 
