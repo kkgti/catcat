@@ -87,6 +87,81 @@ canvas {
 <canvas id="gameCanvas"></canvas>
 
 <script>
+// ==================== 音效系统 ====================
+var SFX = (function() {
+  var audioCtx = null;
+  var muted = false;
+
+  function ctx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+    }
+    return audioCtx;
+  }
+
+  function play(freq, duration, type, vol) {
+    if (muted) return;
+    var c = ctx(); if (!c) return;
+    var osc = c.createOscillator();
+    var gain = c.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol || 0.15, c.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + duration);
+    osc.connect(gain); gain.connect(c.destination);
+    osc.start(c.currentTime);
+    osc.stop(c.currentTime + duration);
+  }
+
+  return {
+    // 找到猫咪 — 上升音阶，欢快
+    catFound: function() {
+      play(523, 0.12, 'sine', 0.12);      // C5
+      setTimeout(function(){ play(659, 0.12, 'sine', 0.12); }, 80);  // E5
+      setTimeout(function(){ play(784, 0.2, 'sine', 0.15); }, 160);  // G5
+    },
+    // 点错 — 低沉短促
+    wrong: function() {
+      play(200, 0.15, 'square', 0.08);
+      setTimeout(function(){ play(150, 0.2, 'square', 0.06); }, 100);
+    },
+    // 胜利 — 完整上升和弦
+    win: function() {
+      play(523, 0.15, 'sine', 0.10);      // C5
+      setTimeout(function(){ play(659, 0.15, 'sine', 0.10); }, 120);  // E5
+      setTimeout(function(){ play(784, 0.15, 'sine', 0.10); }, 240);  // G5
+      setTimeout(function(){ play(1047, 0.3, 'sine', 0.12); }, 360);  // C6
+    },
+    // 失败 — 下降音
+    lose: function() {
+      play(400, 0.2, 'sawtooth', 0.06);
+      setTimeout(function(){ play(300, 0.2, 'sawtooth', 0.06); }, 150);
+      setTimeout(function(){ play(200, 0.3, 'sawtooth', 0.05); }, 300);
+    },
+    // 按钮点击
+    tap: function() {
+      play(880, 0.05, 'sine', 0.06);
+    },
+    // 成就解锁
+    achieve: function() {
+      play(784, 0.12, 'sine', 0.10);
+      setTimeout(function(){ play(988, 0.12, 'sine', 0.10); }, 100);
+      setTimeout(function(){ play(1175, 0.25, 'triangle', 0.12); }, 200);
+    },
+    // 倒计时滴答
+    tick: function() {
+      play(1000, 0.03, 'sine', 0.04);
+    },
+    // 工具使用
+    toolUse: function() {
+      play(600, 0.08, 'triangle', 0.08);
+      setTimeout(function(){ play(800, 0.1, 'triangle', 0.08); }, 60);
+    },
+    toggleMute: function() { muted = !muted; return muted; },
+    isMuted: function() { return muted; },
+  };
+})();
+
 // ==================== draw-utils ====================
 var DrawUtils = {
   roundRect: function(ctx, x, y, w, h, r, fill, stroke) {
@@ -1551,6 +1626,7 @@ function unlockAchievement(id) {
   for (var i = 0; i < ACHIEVEMENTS.length; i++) {
     if (ACHIEVEMENTS[i].id === id) {
       game.achievePopup = { name: ACHIEVEMENTS[i].name, icon: ACHIEVEMENTS[i].icon, timer: 3.0 };
+      SFX.achieve();
       break;
     }
   }
@@ -1767,7 +1843,10 @@ function update() {
 
   // 开场提示
   if (game.state === 'intro') {
+    var prevSec = Math.ceil(game.introTimer);
     game.introTimer -= dt;
+    var curSec = Math.ceil(game.introTimer);
+    if (curSec !== prevSec && curSec > 0) SFX.tick();
     if (game.introTimer <= 0) {
       game.state = 'playing';
       var rm = ROOMS[game.currentRoomIdx];
@@ -1835,6 +1914,7 @@ function update() {
       game.currentFoundCat = null;
       if (game.foundCount >= game.cats.length) {
         game.state = 'win';
+        SFX.win();
         // 保存进度
         var stars = calcStars();
         var pid = ROOMS[game.currentRoomIdx].id;
@@ -1855,7 +1935,9 @@ function update() {
     game.wrongAnimTimer -= dt;
     if (game.wrongAnimTimer <= 0) {
       game.wrongItem = null;
-      game.state = game.lives <= 0 ? 'lose' : 'playing';
+      var nextState = game.lives <= 0 ? 'lose' : 'playing';
+      if (nextState === 'lose') SFX.lose();
+      game.state = nextState;
     }
   }
 
@@ -2596,6 +2678,11 @@ function drawHUD(ctx) {
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
   ctx.fillText('🐱 ' + game.foundCount + ' / ' + game.catCount, VIEW_W-22, 33);
+  // 音量按钮
+  var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
+  ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(muteIcon, VIEW_W - 22, 68);
+  game.muteBtn = { x: VIEW_W - 38, y: 56, w: 32, h: 24 };
 }
 
 function drawScrollHints(ctx) {
@@ -3043,23 +3130,31 @@ function handleTap(vx, vy) {
     // 重玩
     if (game.retryBtn) {
       var b = game.retryBtn;
-      if (vx >= b.x && vx <= b.x+b.w && vy >= b.y && vy <= b.y+b.h) { initGame(); return; }
+      if (vx >= b.x && vx <= b.x+b.w && vy >= b.y && vy <= b.y+b.h) { SFX.tap(); initGame(); return; }
     }
     // 下一关
     if (game.nextLevelBtn) {
       var nb = game.nextLevelBtn;
       if (vx >= nb.x && vx <= nb.x+nb.w && vy >= nb.y && vy <= nb.y+nb.h) {
-        initGame(game.currentRoomIdx + 1); return;
+        SFX.tap(); initGame(game.currentRoomIdx + 1); return;
       }
     }
     // 返回选关
     if (game.selectBtn) {
       var sb = game.selectBtn;
       if (vx >= sb.x && vx <= sb.x+sb.w && vy >= sb.y && vy <= sb.y+sb.h) {
-        showLevelSelect(); return;
+        SFX.tap(); showLevelSelect(); return;
       }
     }
     return;
+  }
+
+  // 音量按钮（任何游戏状态都可用）
+  if (game.muteBtn) {
+    var mb = game.muteBtn;
+    if (vx >= mb.x && vx <= mb.x+mb.w && vy >= mb.y && vy <= mb.y+mb.h) {
+      SFX.toggleMute(); return;
+    }
   }
 
   if (game.state !== 'playing') return;
@@ -3081,6 +3176,7 @@ function handleTap(vx, vy) {
   if (game.activeTool === 'laser' && game.laserCooldown <= 0) {
     game.laserActive = true;
     game._usedLaser = true;
+    SFX.toolUse();
     game.laserX = rx; game.laserY = ry;
     game.laserTargetX = rx; game.laserTargetY = ry;
     game.laserTimer = 2.5;
@@ -3104,6 +3200,7 @@ function handleTap(vx, vy) {
 
   if (hit.isCat) {
     // 找到猫!
+    SFX.catFound();
     hit.catRef.found = true;
     hit.catRef.foundAnim = 0;
     game.foundCount++;
@@ -3130,6 +3227,7 @@ function handleTap(vx, vy) {
       return;
     }
     // 点错了
+    SFX.wrong();
     game.lives--; game.mistakes++;
     game.wrongItem = hit;
     game.wrongAnimTimer = 0.6;
@@ -3159,6 +3257,7 @@ function handleToolBtnClick(type) {
     // 直接在视口中心使用
     game.catnipActive = true;
     game._usedCatnip = true;
+    SFX.toolUse();
     game.catnipX = VIEW_W / 2;
     game.catnipY = (BACK_B + FLOOR_B) / 2;
     game.catnipTimer = 3.0;
