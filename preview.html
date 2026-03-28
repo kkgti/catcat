@@ -1287,20 +1287,39 @@ var ROOMS = [
   { id:'kitchen', name:'厨房', emoji:'🍳', desc:'美食飘香，猫咪更机警',
     catCount:3, lives:3, behaviorMult:1.2, envDistraction:0.5,
     hintDelay:18, fakeWobbleInterval:[8,20], wobbleStrengthMult:1.0,
+    alertDecayMult:0.85, steamAlertBonus:1.2, steamTouchGain:10,
     items:KITCHEN_ITEMS, disguises:KITCHEN_DISGUISES, bgType:'kitchen' },
   { id:'bedroom', name:'卧室', emoji:'🛏️', desc:'安静卧室，狡猾猫出没',
     catCount:3, lives:2, behaviorMult:1.5, envDistraction:0.8,
-    hintDelay:12, fakeWobbleInterval:[5,15], wobbleStrengthMult:0.7,
+    hintDelay:12, fakeWobbleInterval:[5,15], wobbleStrengthMult:0.7, alertDecayMult:0.9,
     items:BEDROOM_ITEMS, disguises:BEDROOM_DISGUISES, bgType:'bedroom' },
   { id:'bathroom', name:'浴室', emoji:'🛁', desc:'水汽弥漫，猫咪隐匿',
     catCount:3, lives:3, behaviorMult:1.3, envDistraction:0.6,
-    hintDelay:16, fakeWobbleInterval:[12,22], wobbleStrengthMult:0.85,
+    hintDelay:16, fakeWobbleInterval:[12,22], wobbleStrengthMult:0.85, steamAlertBonus:1.1,
     items:BATHROOM_ITEMS, disguises:BATHROOM_DISGUISES, bgType:'bathroom' },
   { id:'study', name:'书房', emoji:'📚', desc:'书海迷宫，大师级挑战',
     catCount:4, lives:2, behaviorMult:2.0, envDistraction:1.0,
-    hintDelay:25, fakeWobbleInterval:[5,12], wobbleStrengthMult:0.65,
+    hintDelay:25, fakeWobbleInterval:[5,12], wobbleStrengthMult:0.65, alertDecayMult:0.9,
     items:STUDY_ITEMS, disguises:STUDY_DISGUISES, bgType:'study' },
 ];
+
+var ALERTNESS_RULES = {
+  max: 100,
+  decayRate: 4,
+  wrongTapGain: 14,
+  findCatReduce: 12,
+  laserGain: 6,
+  catnipGain: 8,
+  featherGain: 5,
+  steamTapGain: 8,
+  steamTapCooldown: 0.8,
+  watchThreshold: 0.4,
+  dangerThreshold: 0.75,
+  revealReduction: 0.6,
+  durationReduction: 0.35,
+  fakeWobbleBoost: 0.9,
+  envBoost: 0.7,
+};
 
 // 关卡进度（尝试从 localStorage 读取）
 var levelProgress;
@@ -1694,6 +1713,13 @@ var game = {
   // 随机环境事件
   envEvent: null,       // { type, timer, duration, x, y, ...extra }
   envEventCooldown: 0,
+  alertness: 0,
+  alertnessMax: ALERTNESS_RULES.max,
+  alertDecayRate: ALERTNESS_RULES.decayRate,
+  alertTier: 'calm',
+  steamObscureTimer: 0,
+  steamTouchPenalty: false,
+  steamTapCooldown: 0,
   // 工具系统
   activeTool: null,    // null, 'laser', 'catnip', 'feather'
   laserCooldown: 0,    // 剩余冷却秒数
@@ -1912,6 +1938,13 @@ function initGame(roomIdx) {
   game.particles = [];
   game.envEvent = null;
   game.envEventCooldown = 10 + Math.random() * 8; // 开局后10-18秒第一个事件
+  game.alertness = 0;
+  game.alertnessMax = ALERTNESS_RULES.max;
+  game.alertDecayRate = ALERTNESS_RULES.decayRate;
+  game.alertTier = 'calm';
+  game.steamObscureTimer = 0;
+  game.steamTouchPenalty = false;
+  game.steamTapCooldown = 0;
   game._usedLaser = false;
   game._usedCatnip = false;
   game._hintTriggered = false;
@@ -2024,7 +2057,8 @@ function updateFakeWobbles(dt) {
     }
   }
   // 狡猾猫触发新假穿帮
-  game.fakeWobbleTimer -= dt;
+  var alertRatio = getAlertnessRatio();
+  game.fakeWobbleTimer -= dt * (1 + alertRatio * ALERTNESS_RULES.fakeWobbleBoost);
   if (game.fakeWobbleTimer <= 0) {
     var fwi2 = ROOMS[game.currentRoomIdx].fakeWobbleInterval || [8, 20];
     game.fakeWobbleTimer = fwi2[0] + Math.random() * (fwi2[1] - fwi2[0]);
@@ -2053,6 +2087,101 @@ function getFakeWobble(itemId) {
   return null;
 }
 
+function pickEnvEventSourceItem(roomId, evtType) {
+  var preferredIds = null;
+  if (evtType === 'steam') {
+    if (roomId === 'kitchen') preferredIds = ['stove', 'pot', 'pan', 'kettle'];
+    else if (roomId === 'bathroom') preferredIds = ['shower', 'bathtub', 'sink_bath'];
+  } else if (evtType === 'drip') {
+    if (roomId === 'kitchen') preferredIds = ['k_sink'];
+    else if (roomId === 'bathroom') preferredIds = ['sink_bath', 'shower'];
+  }
+
+  if (preferredIds && preferredIds.length > 0) {
+    var preferredItems = game.allItems.filter(function(item) {
+      return preferredIds.indexOf(item.id) !== -1;
+    });
+    if (preferredItems.length > 0) {
+      return preferredItems[Math.floor(Math.random() * preferredItems.length)];
+    }
+  }
+
+  return game.allItems[Math.floor(Math.random() * game.allItems.length)];
+}
+
+function getAlertnessRatio() {
+  return Math.max(0, Math.min(1, game.alertness / Math.max(1, game.alertnessMax)));
+}
+
+function isSteamObscuring() {
+  return game.steamObscureTimer > 0;
+}
+
+function pointInSteam(vx, vy) {
+  if (!game.envEvent || game.envEvent.type !== 'steam') return false;
+  var e = game.envEvent;
+  var p = 1 - e.timer / e.duration;
+  var centerY = e.y - 18 - p * 18;
+  var width = 62;
+  var height = 96;
+  return vx >= e.x - width / 2 && vx <= e.x + width / 2 &&
+    vy >= centerY - height / 2 && vy <= centerY + height / 2;
+}
+
+function addAlertness(amount) {
+  if (!amount) return;
+  game.alertness = Math.max(0, Math.min(game.alertnessMax, game.alertness + amount));
+}
+
+function updateAlertness(dt) {
+  var room = ROOMS[game.currentRoomIdx] || {};
+  var decay = game.alertDecayRate;
+
+  if (game.state !== 'playing') return;
+  if (game.tutorial) return;
+
+  if (game.alertness > 0) {
+    if (game.activeTool) decay *= 0.5;
+    if (game.envEvent) decay *= 0.75;
+    if (game.combo >= 2) decay *= 1.2;
+    if (room.alertDecayMult) decay *= room.alertDecayMult;
+    game.alertness = Math.max(0, game.alertness - decay * dt);
+  }
+
+  if (game.steamObscureTimer > 0) {
+    game.steamObscureTimer -= dt;
+    if (game.steamObscureTimer <= 0) {
+      game.steamObscureTimer = 0;
+      game.steamTouchPenalty = false;
+    }
+  }
+  if (game.steamTapCooldown > 0) {
+    game.steamTapCooldown -= dt;
+    if (game.steamTapCooldown < 0) game.steamTapCooldown = 0;
+  }
+
+  var ratio = getAlertnessRatio();
+  var nextTier = 'calm';
+  if (ratio >= ALERTNESS_RULES.dangerThreshold) nextTier = 'danger';
+  else if (ratio >= ALERTNESS_RULES.watchThreshold) nextTier = 'watch';
+
+  if (nextTier !== game.alertTier) {
+    game.alertTier = nextTier;
+    if (game.state === 'playing') {
+      if (nextTier === 'watch') {
+        game.toast = '猫咪开始警觉了，动作会变少';
+        game.toastTimer = 1.2;
+      } else if (nextTier === 'danger') {
+        game.toast = '警觉拉满！猫咪正在收敛动作';
+        game.toastTimer = 1.5;
+      } else if (nextTier === 'calm' && ratio <= 0.1) {
+        game.toast = '房间恢复平静，猫咪放松了';
+        game.toastTimer = 1.0;
+      }
+    }
+  }
+}
+
 // ==================== 更新逻辑 ====================
 function update() {
   var now = Date.now();
@@ -2076,16 +2205,19 @@ function update() {
 
   // 猫穿帮行为更新
   if (game.state === 'playing' || game.state === 'intro') {
+    var alertRatio = getAlertnessRatio();
+    var revealRate = 1 - alertRatio * ALERTNESS_RULES.revealReduction;
+    var visibleDurationScale = 1 - alertRatio * ALERTNESS_RULES.durationReduction;
     game.cats.forEach(function(cat) {
       if (cat.found) return;
       var p = cat.personality;
       // 晃动
       if (!cat.wobbleActive) {
-        cat.wobbleTimer -= dt;
-        if (cat.wobbleTimer <= 0) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = randRange(p.wobbleDuration); }
+        cat.wobbleTimer -= dt * revealRate;
+        if (cat.wobbleTimer <= 0) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = Math.max(0.18, randRange(p.wobbleDuration) * visibleDurationScale); }
       } else {
         cat.wobbleElapsed += dt;
-        if (cat.wobbleElapsed >= cat.wobbleDuration) { cat.wobbleActive = false; cat.wobbleTimer = randRange(p.wobbleCooldown) * cat.behaviorMult; }
+        if (cat.wobbleElapsed >= cat.wobbleDuration) { cat.wobbleActive = false; cat.wobbleTimer = randRange(p.wobbleCooldown) * cat.behaviorMult / Math.max(0.3, revealRate); }
       }
       // 尾巴
       if (!cat.tailActive) {
@@ -2097,23 +2229,23 @@ function update() {
       }
       // 气泡
       if (!cat.bubbleActive) {
-        cat.bubbleTimer -= dt;
+        cat.bubbleTimer -= dt * revealRate;
         if (cat.bubbleTimer <= 0) {
           cat.bubbleActive = true; cat.bubbleElapsed = 0;
-          cat.bubbleDuration = randRange(p.bubbleDuration);
+          cat.bubbleDuration = Math.max(0.4, randRange(p.bubbleDuration) * visibleDurationScale);
           cat.bubbleText = getBubbleText(p, ROOMS[game.currentRoomIdx].id);
         }
       } else {
         cat.bubbleElapsed += dt;
-        if (cat.bubbleElapsed >= cat.bubbleDuration) { cat.bubbleActive = false; cat.bubbleTimer = randRange(p.bubbleCooldown) * cat.behaviorMult; }
+        if (cat.bubbleElapsed >= cat.bubbleDuration) { cat.bubbleActive = false; cat.bubbleTimer = randRange(p.bubbleCooldown) * cat.behaviorMult / Math.max(0.3, revealRate); }
       }
       // 眼睛偷看
       if (!cat.eyeActive) {
-        cat.eyeTimer -= dt;
-        if (cat.eyeTimer <= 0) { cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = randRange(p.eyeDuration); }
+        cat.eyeTimer -= dt * revealRate;
+        if (cat.eyeTimer <= 0) { cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = Math.max(0.2, randRange(p.eyeDuration) * visibleDurationScale); }
       } else {
         cat.eyeElapsed += dt;
-        if (cat.eyeElapsed >= cat.eyeDuration) { cat.eyeActive = false; cat.eyeTimer = randRange(p.eyeCooldown) * cat.behaviorMult; }
+        if (cat.eyeElapsed >= cat.eyeDuration) { cat.eyeActive = false; cat.eyeTimer = randRange(p.eyeCooldown) * cat.behaviorMult / Math.max(0.3, revealRate); }
       }
     });
     // 狡猾猫的假穿帮：让附近的普通物品偶尔也晃一下
@@ -2233,6 +2365,7 @@ function update() {
   updateBuddyAlert(dt);
   updateFeatherEffect(dt);
   updateExpressions(dt);
+  updateAlertness(dt);
 
   // 震动
   if (game.shakeTimer > 0) {
@@ -2392,18 +2525,36 @@ function updateEnvEvent(dt) {
     return;
   }
   // 冷却中
-  game.envEventCooldown -= dt;
+  var room = ROOMS[game.currentRoomIdx] || {};
+  var alertRatio = getAlertnessRatio();
+  game.envEventCooldown -= dt * (1 + alertRatio * ALERTNESS_RULES.envBoost);
   if (game.envEventCooldown > 0) return;
   // 触发新事件
   var roomId = ROOMS[game.currentRoomIdx].id;
   var pool = ENV_EVENTS[roomId] || ENV_EVENTS.livingroom;
-  var evt = pool[Math.floor(Math.random() * pool.length)];
+  var evt = null;
+  if ((roomId === 'kitchen' || roomId === 'bathroom') && alertRatio >= 0.55) {
+    var steamPool = pool.filter(function(entry) { return entry.type === 'steam'; });
+    var steamBias = room.steamAlertBonus || 1;
+    if (steamPool.length > 0 && Math.random() < Math.min(1, alertRatio * steamBias)) {
+      evt = steamPool[Math.floor(Math.random() * steamPool.length)];
+    }
+  }
+  if (!evt) evt = pool[Math.floor(Math.random() * pool.length)];
   // 选一个随机物品位置作为事件源
-  var srcItem = game.allItems[Math.floor(Math.random() * game.allItems.length)];
+  var srcItem = pickEnvEventSourceItem(roomId, evt.type);
   game.envEvent = {
     type: evt.type, duration: evt.duration, timer: evt.duration,
     x: srcItem.baseX, y: srcItem.baseY - srcItem.h * 0.3,
   };
+  if (evt.type === 'steam') {
+    game.steamObscureTimer = evt.duration;
+    game.steamTouchPenalty = true;
+    if (roomId === 'kitchen') {
+      game.toast = '蒸汽升起来了，先别急着乱点';
+      game.toastTimer = 1.2;
+    }
+  }
 }
 
 function drawEnvEvent(ctx) {
@@ -2440,6 +2591,11 @@ function drawEnvEvent(ctx) {
   } else if (e.type === 'steam') {
     // 蒸汽上升
     ctx.save();
+    ctx.globalAlpha = isSteamObscuring() ? 1 : 0.7;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y - 28, 42, 56, 0, 0, Math.PI * 2);
+    ctx.fill();
     for (var si = 0; si < 3; si++) {
       var sp = (p + si * 0.15) % 1;
       var sx = e.x + Math.sin(sp * 6 + si) * 8;
@@ -3555,6 +3711,7 @@ function handleFeatherToolBtnClick() {
 
 function handleFeatherActivation(rx, ry) {
   game.featherActive = true; game._usedFeather = true;
+  addAlertness(ALERTNESS_RULES.featherGain);
   SFX.toolUse();
   game.featherX = rx; game.featherY = ry;
   game.featherTimer = 2.5; game.featherCooldown = game.featherMaxCD;
@@ -4080,7 +4237,7 @@ function render() {
 
   // ---- 以下是固定在屏幕上的 UI ----
   // HUD
-  drawHUD(ctx);
+  drawHUDEnhanced(ctx);
   drawCombo(ctx);
   // 工具栏
   drawToolbar(ctx);
@@ -4152,6 +4309,65 @@ function drawHUD(ctx) {
   ctx.fillText('⏸', VIEW_W - 56, 68);
   game.pauseBtn = { x: VIEW_W - 78, y: 46, w: 44, h: 44 };
   // 音量按钮
+  var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
+  ctx.fillText(muteIcon, VIEW_W - 22, 68);
+  game.muteBtn = { x: VIEW_W - 44, y: 46, w: 44, h: 44 };
+}
+
+function drawHUDEnhanced(ctx) {
+  DrawUtils.roundRect(ctx, 10, 10, VIEW_W-20, 62, 14, 'rgba(0,0,0,0.55)');
+  ctx.font = '18px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  var heartStr = '';
+  for (var i = 0; i < game.maxLives; i++) heartStr += i < game.lives ? '❤️' : '🖤';
+  ctx.fillText(heartStr, 22, 33);
+
+  var mins = Math.floor(game.playTime / 60);
+  var secs = Math.floor(game.playTime % 60);
+  var timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+  ctx.font = '14px sans-serif';
+  ctx.fillStyle = '#aaa';
+  ctx.textAlign = 'center';
+  ctx.fillText(timeStr, VIEW_W/2, 33);
+
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'right';
+  ctx.fillText('🐱 ' + game.foundCount + ' / ' + game.catCount, VIEW_W-22, 33);
+
+  var alertRatio = getAlertnessRatio();
+  var alertColor = '#5fd38d';
+  var alertLabel = '平静';
+  if (alertRatio >= 0.75) {
+    alertColor = '#ff7a59';
+    alertLabel = '高度警觉';
+  } else if (alertRatio >= 0.4) {
+    alertColor = '#ffd166';
+    alertLabel = '警觉上升';
+  }
+  ctx.textAlign = 'left';
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#bfc7d5';
+  ctx.fillText('警觉值', 22, 55);
+  DrawUtils.roundRect(ctx, 74, 49, 170, 10, 5, 'rgba(255,255,255,0.10)');
+  if (alertRatio > 0) {
+    DrawUtils.roundRect(ctx, 74, 49, 170 * alertRatio, 10, 5, alertColor);
+  }
+  ctx.textAlign = 'right';
+  ctx.fillStyle = alertColor;
+  ctx.fillText(alertLabel, 300, 55);
+  if (isSteamObscuring()) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#dff6ff';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('蒸汽遮挡中', VIEW_W / 2, 55);
+  }
+
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('⏸', VIEW_W - 56, 68);
+  game.pauseBtn = { x: VIEW_W - 78, y: 46, w: 44, h: 44 };
+
   var muteIcon = SFX.isMuted() ? '🔇' : '🔊';
   ctx.fillText(muteIcon, VIEW_W - 22, 68);
   game.muteBtn = { x: VIEW_W - 44, y: 46, w: 44, h: 44 };
@@ -5167,6 +5383,25 @@ function handleTap(vx, vy) {
     handleFeatherActivation(rx, ry); return;
   }
 
+  if (isSteamObscuring() && pointInSteam(rx, ry)) {
+    var currentRoom = ROOMS[game.currentRoomIdx] || {};
+    if (game.steamTapCooldown <= 0) {
+      var steamGain = currentRoom.steamTouchGain || ALERTNESS_RULES.steamTapGain;
+      if (getAlertnessRatio() >= ALERTNESS_RULES.dangerThreshold) {
+        steamGain *= 0.5;
+      }
+      addAlertness(steamGain);
+      game.steamTapCooldown = ALERTNESS_RULES.steamTapCooldown;
+    }
+    game.toast = '蒸汽太浓了，看清再下手';
+    game.toastTimer = 0.8;
+    if (game.steamTouchPenalty) {
+      game.steamTouchPenalty = false;
+      game.shakeTimer = 0.15;
+    }
+    return;
+  }
+
   // 检查点击了哪个物品（从上层往下找）
   var hit = null;
   for (var i = game.allItems.length - 1; i >= 0; i--) {
@@ -5220,6 +5455,7 @@ function handleTap(vx, vy) {
     if (game.totalCatsFound >= 30) unlockAchievement('cat_master');
     // Patch: buddy cat found
     onBuddyCatFound(hit.catRef);
+    addAlertness(-ALERTNESS_RULES.findCatReduce);
   } else {
     // 引导模式 tap 步骤：点错不扣血
     if (game.tutorial && game.tutorial.step === 1) {
@@ -5230,6 +5466,7 @@ function handleTap(vx, vy) {
     SFX.wrong();
     game.combo = 0; game.comboTimer = 0;
     game.lives--; game.mistakes++;
+    addAlertness(ALERTNESS_RULES.wrongTapGain);
     game.wrongItem = hit;
     game.wrongAnimTimer = 0.6;
     game.shakeTimer = 0.3;
@@ -5248,6 +5485,7 @@ function handleToolBtnClick(type) {
       game.activeTool = null; // 取消选择
     } else {
       game.activeTool = 'laser';
+      addAlertness(ALERTNESS_RULES.laserGain);
       game.toast = '点击房间中任意位置使用激光笔'; game.toastTimer = 1.5;
     }
   } else if (type === 'catnip') {
@@ -5258,6 +5496,7 @@ function handleToolBtnClick(type) {
     // 直接在视口中心使用
     game.catnipActive = true;
     game._usedCatnip = true;
+    addAlertness(ALERTNESS_RULES.catnipGain);
     SFX.toolUse();
     game.catnipX = VIEW_W / 2;
     game.catnipY = (BACK_B + FLOOR_B) / 2;

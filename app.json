@@ -8,5 +8,10 @@
     "navigationBarBackgroundColor": "#2c2c3a",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#1a1a2e"
+  },
+  "permission": {
+    "scope.album": {
+      "desc": "用于保存分享成绩卡片到相册"
+    }
   }
 }

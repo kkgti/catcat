@@ -23,6 +23,23 @@ var EXPRESSION_TYPES = [
 ];
 var EXPR_DURATION_BASE = [0.8, 1.5];
 var EXPR_INTERVAL_BASE = [8, 20];
+var ALERTNESS_RULES = {
+  max: 100,
+  decayRate: 4,
+  wrongTapGain: 14,
+  findCatReduce: 12,
+  laserGain: 6,
+  catnipGain: 8,
+  featherGain: 5,
+  steamTapGain: 8,
+  steamTapCooldown: 0.8,
+  watchThreshold: 0.4,
+  dangerThreshold: 0.75,
+  revealReduction: 0.6,
+  durationReduction: 0.35,
+  fakeWobbleBoost: 0.9,
+  envBoost: 0.7,
+};
 
 // ========== 成就定义 ==========
 var ACHIEVEMENTS = [
@@ -129,6 +146,14 @@ function GameEngine() {
   this.comboTimer = 0;
   this.comboWindow = 8;
   this.comboPopup = null;
+  // 警觉值系统
+  this.alertness = 0;
+  this.alertnessMax = ALERTNESS_RULES.max;
+  this.alertDecayRate = ALERTNESS_RULES.decayRate;
+  this.alertTier = 'calm';
+  this.steamObscureTimer = 0;
+  this.steamTouchPenalty = false;
+  this.steamTapCooldown = 0;
   // 暂停
   this.paused = false;
   this.pauseBtn = null;
@@ -274,6 +299,11 @@ GameEngine.prototype.startGame = function(roomIdx) {
   this._hintTriggered = false;
   this._initFeatherState();
   this.combo = 0; this.maxCombo = 0; this.comboTimer = 0; this.comboPopup = null;
+  this.alertness = 0;
+  this.alertTier = 'calm';
+  this.steamObscureTimer = 0;
+  this.steamTouchPenalty = false;
+  this.steamTapCooldown = 0;
   this.paused = false;
   this.timeOfDay = ['morning', 'afternoon', 'evening', 'night'][Math.floor(Math.random() * 4)];
 
@@ -547,6 +577,7 @@ GameEngine.prototype._update = function() {
   // 计时器
   if (this.state === 'playing') {
     this.playTime += dt;
+    this._updateAlertness(dt);
   }
 
   // 连击倒计时
@@ -603,18 +634,101 @@ GameEngine.prototype._update = function() {
   if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast = ''; }
 };
 
+GameEngine.prototype._getAlertnessRatio = function() {
+  return Math.max(0, Math.min(1, this.alertness / this.alertnessMax));
+};
+
+GameEngine.prototype._isSteamObscuring = function() {
+  return this.steamObscureTimer > 0;
+};
+
+GameEngine.prototype._pointInSteam = function(vx, vy) {
+  if (!this.envEvent || this.envEvent.type !== 'steam') return false;
+  var e = this.envEvent;
+  var p = 1 - e.timer / e.duration;
+  var centerY = e.y - 18 - p * 18;
+  var width = 62;
+  var height = 96;
+  return vx >= e.x - width / 2 && vx <= e.x + width / 2 &&
+    vy >= centerY - height / 2 && vy <= centerY + height / 2;
+};
+
+GameEngine.prototype._addAlertness = function(amount) {
+  if (!amount) return;
+  this.alertness = Math.max(0, Math.min(this.alertnessMax, this.alertness + amount));
+};
+
+GameEngine.prototype._updateAlertness = function(dt) {
+  var room = scene.ROOMS[this.currentRoomIdx] || {};
+  var decay = this.alertDecayRate;
+
+  if (this.state !== 'playing') return;
+  if (this.tutorial) return;
+
+  if (this.alertness > 0) {
+    if (this.activeTool) decay *= 0.5;
+    if (this.envEvent) decay *= 0.75;
+    if (this.combo >= 2) decay *= 1.2;
+    if (room.alertDecayMult) decay *= room.alertDecayMult;
+    this.alertness = Math.max(0, this.alertness - decay * dt);
+  }
+
+  if (this.steamObscureTimer > 0) {
+    this.steamObscureTimer -= dt;
+    if (this.steamObscureTimer <= 0) {
+      this.steamObscureTimer = 0;
+      this.steamTouchPenalty = false;
+    }
+  }
+  if (this.steamTapCooldown > 0) {
+    this.steamTapCooldown -= dt;
+    if (this.steamTapCooldown < 0) this.steamTapCooldown = 0;
+  }
+
+  var ratio = this._getAlertnessRatio();
+  var nextTier = 'calm';
+  if (ratio >= ALERTNESS_RULES.dangerThreshold) nextTier = 'danger';
+  else if (ratio >= ALERTNESS_RULES.watchThreshold) nextTier = 'watch';
+
+  if (nextTier !== this.alertTier) {
+    this.alertTier = nextTier;
+    if (this.state === 'playing') {
+      if (nextTier === 'watch') {
+        this.toast = '猫咪开始警觉了，动作会变少';
+        this.toastTimer = 1.2;
+      } else if (nextTier === 'danger') {
+        this.toast = '警觉拉满！猫咪正在收敛动作';
+        this.toastTimer = 1.5;
+      } else if (nextTier === 'calm' && ratio <= 0.1) {
+        this.toast = '房间恢复平静，猫咪放松了';
+        this.toastTimer = 1.0;
+      }
+    }
+  }
+};
+
 GameEngine.prototype._updateCatBehaviors = function(dt) {
   var self = this;
+  var alertRatio = this._getAlertnessRatio();
+  var revealRate = 1 - alertRatio * ALERTNESS_RULES.revealReduction;
+  var visibleDurationScale = 1 - alertRatio * ALERTNESS_RULES.durationReduction;
   this.cats.forEach(function(cat) {
     if (cat.found) return;
     var p = cat.personality;
     // 晃动
     if (!cat.wobbleActive) {
-      cat.wobbleTimer -= dt;
-      if (cat.wobbleTimer <= 0) { cat.wobbleActive = true; cat.wobbleElapsed = 0; cat.wobbleDuration = catSystem.randRange(p.wobbleDuration); }
+      cat.wobbleTimer -= dt * revealRate;
+      if (cat.wobbleTimer <= 0) {
+        cat.wobbleActive = true;
+        cat.wobbleElapsed = 0;
+        cat.wobbleDuration = Math.max(0.18, catSystem.randRange(p.wobbleDuration) * visibleDurationScale);
+      }
     } else {
       cat.wobbleElapsed += dt;
-      if (cat.wobbleElapsed >= cat.wobbleDuration) { cat.wobbleActive = false; cat.wobbleTimer = catSystem.randRange(p.wobbleCooldown) * cat.behaviorMult; }
+      if (cat.wobbleElapsed >= cat.wobbleDuration) {
+        cat.wobbleActive = false;
+        cat.wobbleTimer = catSystem.randRange(p.wobbleCooldown) * cat.behaviorMult / Math.max(0.3, revealRate);
+      }
     }
     // 尾巴
     if (!cat.tailActive) {
@@ -626,23 +740,33 @@ GameEngine.prototype._updateCatBehaviors = function(dt) {
     }
     // 气泡
     if (!cat.bubbleActive) {
-      cat.bubbleTimer -= dt;
+      cat.bubbleTimer -= dt * revealRate;
       if (cat.bubbleTimer <= 0) {
         cat.bubbleActive = true; cat.bubbleElapsed = 0;
-        cat.bubbleDuration = catSystem.randRange(p.bubbleDuration);
+        cat.bubbleDuration = Math.max(0.4, catSystem.randRange(p.bubbleDuration) * visibleDurationScale);
         cat.bubbleText = catSystem.getBubbleText(p, scene.ROOMS[self.currentRoomIdx].id);
       }
     } else {
       cat.bubbleElapsed += dt;
-      if (cat.bubbleElapsed >= cat.bubbleDuration) { cat.bubbleActive = false; cat.bubbleTimer = catSystem.randRange(p.bubbleCooldown) * cat.behaviorMult; }
+      if (cat.bubbleElapsed >= cat.bubbleDuration) {
+        cat.bubbleActive = false;
+        cat.bubbleTimer = catSystem.randRange(p.bubbleCooldown) * cat.behaviorMult / Math.max(0.3, revealRate);
+      }
     }
     // 眼睛偷看
     if (!cat.eyeActive) {
-      cat.eyeTimer -= dt;
-      if (cat.eyeTimer <= 0) { cat.eyeActive = true; cat.eyeElapsed = 0; cat.eyeDuration = catSystem.randRange(p.eyeDuration); }
+      cat.eyeTimer -= dt * revealRate;
+      if (cat.eyeTimer <= 0) {
+        cat.eyeActive = true;
+        cat.eyeElapsed = 0;
+        cat.eyeDuration = Math.max(0.2, catSystem.randRange(p.eyeDuration) * visibleDurationScale);
+      }
     } else {
       cat.eyeElapsed += dt;
-      if (cat.eyeElapsed >= cat.eyeDuration) { cat.eyeActive = false; cat.eyeTimer = catSystem.randRange(p.eyeCooldown) * cat.behaviorMult; }
+      if (cat.eyeElapsed >= cat.eyeDuration) {
+        cat.eyeActive = false;
+        cat.eyeTimer = catSystem.randRange(p.eyeCooldown) * cat.behaviorMult / Math.max(0.3, revealRate);
+      }
     }
   });
 };
@@ -654,7 +778,8 @@ GameEngine.prototype._updateFakeWobbles = function(dt) {
       this.fakeWobbles.splice(i, 1);
     }
   }
-  this.fakeWobbleTimer -= dt;
+  var alertRatio = this._getAlertnessRatio();
+  this.fakeWobbleTimer -= dt * (1 + alertRatio * ALERTNESS_RULES.fakeWobbleBoost);
   if (this.fakeWobbleTimer <= 0) {
     var fwi2 = scene.ROOMS[this.currentRoomIdx].fakeWobbleInterval || [8, 20];
     this.fakeWobbleTimer = fwi2[0] + Math.random() * (fwi2[1] - fwi2[0]);
@@ -679,6 +804,28 @@ GameEngine.prototype._getFakeWobble = function(itemId) {
     if (this.fakeWobbles[i].itemId === itemId) return this.fakeWobbles[i];
   }
   return null;
+};
+
+GameEngine.prototype._pickEnvEventSourceItem = function(roomId, evtType) {
+  var preferredIds = null;
+  if (evtType === 'steam') {
+    if (roomId === 'kitchen') preferredIds = ['stove', 'pot', 'pan', 'kettle'];
+    else if (roomId === 'bathroom') preferredIds = ['shower', 'bathtub', 'sink_bath'];
+  } else if (evtType === 'drip') {
+    if (roomId === 'kitchen') preferredIds = ['k_sink'];
+    else if (roomId === 'bathroom') preferredIds = ['sink_bath', 'shower'];
+  }
+
+  if (preferredIds && preferredIds.length > 0) {
+    var preferredItems = this.allItems.filter(function(item) {
+      return preferredIds.indexOf(item.id) !== -1;
+    });
+    if (preferredItems.length > 0) {
+      return preferredItems[Math.floor(Math.random() * preferredItems.length)];
+    }
+  }
+
+  return this.allItems[Math.floor(Math.random() * this.allItems.length)];
 };
 
 // ========== 随机环境事件 ==========
@@ -719,16 +866,34 @@ GameEngine.prototype._updateEnvEvent = function(dt) {
     }
     return;
   }
-  this.envEventCooldown -= dt;
+  var room = scene.ROOMS[this.currentRoomIdx] || {};
+  var alertRatio = this._getAlertnessRatio();
+  this.envEventCooldown -= dt * (1 + alertRatio * ALERTNESS_RULES.envBoost);
   if (this.envEventCooldown > 0) return;
   var roomId = scene.ROOMS[this.currentRoomIdx].id;
   var pool = ENV_EVENTS[roomId] || ENV_EVENTS.livingroom;
-  var evt = pool[Math.floor(Math.random() * pool.length)];
-  var srcItem = this.allItems[Math.floor(Math.random() * this.allItems.length)];
+  var evt = null;
+  if ((roomId === 'kitchen' || roomId === 'bathroom') && alertRatio >= 0.55) {
+    var steamPool = pool.filter(function(entry) { return entry.type === 'steam'; });
+    var steamBias = room.steamAlertBonus || 1;
+    if (steamPool.length > 0 && Math.random() < Math.min(1, alertRatio * steamBias)) {
+      evt = steamPool[Math.floor(Math.random() * steamPool.length)];
+    }
+  }
+  if (!evt) evt = pool[Math.floor(Math.random() * pool.length)];
+  var srcItem = this._pickEnvEventSourceItem(roomId, evt.type);
   this.envEvent = {
     type: evt.type, duration: evt.duration, timer: evt.duration,
     x: srcItem.baseX, y: srcItem.baseY - srcItem.h * 0.3,
   };
+  if (evt.type === 'steam') {
+    this.steamObscureTimer = evt.duration;
+    this.steamTouchPenalty = true;
+    if (roomId === 'kitchen') {
+      this.toast = '蒸汽升起来了，先别急着乱点';
+      this.toastTimer = 1.2;
+    }
+  }
 };
 
 GameEngine.prototype._drawEnvEvent = function(ctx) {
@@ -736,7 +901,7 @@ GameEngine.prototype._drawEnvEvent = function(ctx) {
   var e = this.envEvent;
   var p = 1 - e.timer / e.duration;
   // envDistraction 缩放干扰可见度
-  var dist = scene.ROOMS[this.currentRoom] && scene.ROOMS[this.currentRoom].envDistraction;
+  var dist = scene.ROOMS[this.currentRoomIdx] && scene.ROOMS[this.currentRoomIdx].envDistraction;
   var _distSaved = false;
   if (dist !== undefined && dist < 1) { ctx.save(); ctx.globalAlpha *= dist; _distSaved = true; }
 
@@ -762,6 +927,11 @@ GameEngine.prototype._drawEnvEvent = function(ctx) {
     ctx.restore();
   } else if (e.type === 'steam') {
     ctx.save();
+    ctx.globalAlpha = this._isSteamObscuring() ? 1 : 0.7;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y - 28, 42, 56, 0, 0, Math.PI * 2);
+    ctx.fill();
     for (var si = 0; si < 3; si++) {
       var sp = (p + si * 0.15) % 1;
       var sx = e.x + Math.sin(sp * 6 + si) * 8;
@@ -1311,7 +1481,7 @@ GameEngine.prototype._drawCatnipEffect = function(ctx) {
 };
 
 GameEngine.prototype._drawHUD = function(ctx) {
-  draw.roundRect(ctx, 10, 10, VIEW_W-20, 44, 14, 'rgba(0,0,0,0.55)');
+  draw.roundRect(ctx, 10, 10, VIEW_W-20, 62, 14, 'rgba(0,0,0,0.55)');
   ctx.font = '18px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff';
   var heartStr = '';
@@ -1328,6 +1498,33 @@ GameEngine.prototype._drawHUD = function(ctx) {
   ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.textAlign = 'right';
   ctx.fillText('🐱 ' + this.foundCount + ' / ' + this.catCount, VIEW_W-22, 33);
+  var alertRatio = this._getAlertnessRatio();
+  var alertColor = '#5fd38d';
+  var alertLabel = '平静';
+  if (alertRatio >= 0.75) {
+    alertColor = '#ff7a59';
+    alertLabel = '高度警觉';
+  } else if (alertRatio >= 0.4) {
+    alertColor = '#ffd166';
+    alertLabel = '警觉上升';
+  }
+  ctx.textAlign = 'left';
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#bfc7d5';
+  ctx.fillText('警觉值', 22, 55);
+  draw.roundRect(ctx, 74, 49, 170, 10, 5, 'rgba(255,255,255,0.10)');
+  if (alertRatio > 0) {
+    draw.roundRect(ctx, 74, 49, 170 * alertRatio, 10, 5, alertColor);
+  }
+  ctx.textAlign = 'right';
+  ctx.fillStyle = alertColor;
+  ctx.fillText(alertLabel, 300, 55);
+  if (this._isSteamObscuring()) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#dff6ff';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('蒸汽遮挡中', VIEW_W / 2, 55);
+  }
   // 暂停按钮
   ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('⏸', VIEW_W - 56, 68);
@@ -2197,29 +2394,46 @@ GameEngine.prototype._saveShareCardAsImage = function() {
   var canvas = this.ctx && this.ctx.canvas ? this.ctx.canvas : null;
   if (!canvas) return;
 
-  // ── 小程序环境：使用 tt.canvasToTempFilePath + tt.saveImageToPhotosAlbum ──
-  // if (typeof tt !== 'undefined' && tt.canvasToTempFilePath) {
-  //   tt.canvasToTempFilePath({
-  //     canvas: canvas,
-  //     success: function(res) {
-  //       tt.saveImageToPhotosAlbum({
-  //         filePath: res.tempFilePath,
-  //         success: function() {
-  //           self.toast = '图片已保存到相册!'; self.toastTimer = 2.0;
-  //         },
-  //         fail: function() {
-  //           self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
-  //         }
-  //       });
-  //     },
-  //     fail: function() {
-  //       self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
-  //     }
-  //   });
-  //   return;
-  // }
+  // 小程序环境：导出当前 canvas 并保存到系统相册
+  if (typeof tt !== 'undefined' && tt.canvasToTempFilePath && tt.saveImageToPhotosAlbum) {
+    var exportWidth = canvas.width || Math.round(this.canvasW * (this.dpr || 1));
+    var exportHeight = canvas.height || Math.round(this.canvasH * (this.dpr || 1));
 
-  // ── 浏览器环境：toDataURL + download ──
+    tt.canvasToTempFilePath({
+      canvas: canvas,
+      x: 0,
+      y: 0,
+      width: exportWidth,
+      height: exportHeight,
+      destWidth: exportWidth,
+      destHeight: exportHeight,
+      success: function(res) {
+        tt.saveImageToPhotosAlbum({
+          filePath: res.tempFilePath,
+          success: function() {
+            self.toast = '图片已保存到相册';
+            self.toastTimer = 2.0;
+          },
+          fail: function(err) {
+            var errMsg = err && err.errMsg ? err.errMsg : '';
+            if (errMsg.indexOf('auth') !== -1 || errMsg.indexOf('deny') !== -1) {
+              self.toast = '请先允许保存到相册后再重试';
+            } else {
+              self.toast = '保存失败，请截图分享';
+            }
+            self.toastTimer = 2.0;
+          }
+        });
+      },
+      fail: function() {
+        self.toast = '图片导出失败，请截图分享';
+        self.toastTimer = 2.0;
+      }
+    });
+    return;
+  }
+
+  // 浏览器环境：toDataURL + download
   try {
     var room = scene.ROOMS[this.currentRoomIdx];
     var stars = this._calcStars();
@@ -2230,9 +2444,11 @@ GameEngine.prototype._saveShareCardAsImage = function() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    self.toast = '图片已保存!'; self.toastTimer = 2.0;
+    self.toast = '图片已保存!';
+    self.toastTimer = 2.0;
   } catch (e) {
-    self.toast = '保存失败，请截图分享'; self.toastTimer = 2.0;
+    self.toast = '保存失败，请截图分享';
+    self.toastTimer = 2.0;
   }
 };
 
@@ -2722,6 +2938,25 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     }
   }
 
+  if (this._isSteamObscuring() && this._pointInSteam(vx, vy)) {
+    var currentRoom = scene.ROOMS[this.currentRoomIdx] || {};
+    if (this.steamTapCooldown <= 0) {
+      var steamGain = currentRoom.steamTouchGain || ALERTNESS_RULES.steamTapGain;
+      if (this._getAlertnessRatio() >= ALERTNESS_RULES.dangerThreshold) {
+        steamGain *= 0.5;
+      }
+      this._addAlertness(steamGain);
+      this.steamTapCooldown = ALERTNESS_RULES.steamTapCooldown;
+    }
+    this.toast = '蒸汽太浓了，看清再下手';
+    this.toastTimer = 0.8;
+    if (this.steamTouchPenalty) {
+      this.steamTouchPenalty = false;
+      this.shakeTimer = 0.15;
+    }
+    return;
+  }
+
   // 逗猫棒使用
   if (this.activeTool === 'feather' && this.featherCooldown <= 0) {
     this._handleFeatherActivation(vx, vy);
@@ -2773,6 +3008,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     }
     // 搭档猫系统
     this._onBuddyCatFound(hit.catRef);
+    this._addAlertness(-ALERTNESS_RULES.findCatReduce);
     // 图鉴收录
     var isNewCodex = codexMod.record(hit.catRef.disguiseId);
     if (isNewCodex) {
@@ -2804,6 +3040,7 @@ GameEngine.prototype._handleTap = function(vx, vy) {
     this.combo = 0; this.comboTimer = 0;
     this.lives--;
     this.mistakes++;
+    this._addAlertness(ALERTNESS_RULES.wrongTapGain);
     SFX.wrong();
     this.wrongItem = hit;
     this.wrongAnimTimer = 0.6;
@@ -2824,6 +3061,7 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
       this.activeTool = null;
     } else {
       this.activeTool = 'laser';
+      this._addAlertness(ALERTNESS_RULES.laserGain);
       SFX.toolUse();
       this.toast = '点击房间中任意位置使用激光笔'; this.toastTimer = 1.5;
     }
@@ -2834,6 +3072,7 @@ GameEngine.prototype._handleToolBtnClick = function(type) {
     }
     this.catnipActive = true;
     this._usedCatnip = true;
+    this._addAlertness(ALERTNESS_RULES.catnipGain);
     SFX.toolUse();
     this.catnipX = VIEW_W / 2;
     this.catnipY = (scene.BACK_B + scene.FLOOR_B) / 2;
@@ -3382,6 +3621,7 @@ GameEngine.prototype._handleFeatherToolBtnClick = function() {
 GameEngine.prototype._handleFeatherActivation = function(rx, ry) {
   this.featherActive = true;
   this._usedFeather = true;
+  this._addAlertness(ALERTNESS_RULES.featherGain);
   SFX.toolUse();
   this.featherX = rx;
   this.featherY = ry;
